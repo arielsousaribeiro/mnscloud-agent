@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "start": "deno run --allow-read=/etc/mnscloud/agent,/var/lib/mnscloud/agent,/recordings,/media-files --allow-write=/var/lib/mnscloud/agent,/var/log/mnscloud/agent,/recordings,/media-files --allow-net main.ts",
+    "start": "deno run --allow-read=/etc/mnscloud/agent,/var/lib/mnscloud/agent,/recordings,/media-files --allow-write=/var/lib/mnscloud/agent,/var/log/mnscloud/agent,/recordings,/media-files --allow-net --allow-run=asterisk,fs_cli,/usr/sbin/asterisk,/usr/bin/asterisk,/usr/bin/fs_cli,/usr/local/bin/fs_cli main.ts",
     "check": "deno check main.ts",
     "fmt": "deno fmt"
   },
