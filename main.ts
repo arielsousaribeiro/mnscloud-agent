@@ -925,6 +925,66 @@ function payloadStringArray(
   return items.length ? [...new Set(items)] : fallback;
 }
 
+function stringArrayFromUnknown(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter((item) => item);
+}
+
+function crowdSecAcquisitionType(slug: string) {
+  const map: Record<string, string> = {
+    apache: "apache2",
+    asterisk: "asterisk",
+    dovecot: "dovecot",
+    freeswitch: "freeswitch",
+    mariadb: "mysql",
+    nginx: "nginx",
+    opensips: "opensips",
+    postfix: "postfix",
+    postgresql: "postgresql",
+    ssh: "syslog",
+  };
+  return map[slug] ?? slug;
+}
+
+async function writeCrowdSecProfileAcquisition(services: unknown[]) {
+  const entries = services.flatMap((service) => {
+    if (!service || typeof service !== "object") return [];
+    const record = service as Record<string, unknown>;
+    const slug = typeof record["slug"] === "string"
+      ? record["slug"].trim()
+      : "";
+    const logPaths = stringArrayFromUnknown(record["logPaths"]);
+    if (!slug || logPaths.length === 0) return [];
+    return [{
+      slug,
+      logPaths,
+      type: crowdSecAcquisitionType(slug),
+    }];
+  });
+
+  const path = "/etc/crowdsec/acquis.d/mnscloud-profile.yaml";
+  await ensureParentDirectory(path);
+  if (entries.length === 0) {
+    await Deno.writeTextFile(path, "# Managed by MNSCloud Agent.\n");
+    await Deno.chmod(path, 0o644).catch(() => undefined);
+    return entries;
+  }
+
+  const content = entries.map((entry) =>
+    [
+      "filenames:",
+      ...entry.logPaths.map((logPath) => `  - ${JSON.stringify(logPath)}`),
+      "labels:",
+      `  type: ${JSON.stringify(entry.type)}`,
+    ].join("\n")
+  ).join("\n---\n") + "\n";
+  await Deno.writeTextFile(path, content);
+  await Deno.chmod(path, 0o644).catch(() => undefined);
+  return entries;
+}
+
 function assertCapability(config: AgentConfig, capability: string) {
   if (!config.capabilities[capability]) {
     throw new Error(`Capability is disabled: ${capability}`);
@@ -1317,10 +1377,13 @@ async function applyCyberSecurityProfile(
   const services = Array.isArray(payload?.["services"])
     ? payload["services"]
     : [];
-  const collections = payloadStringArray(payload, "collections", [
-    "crowdsecurity/linux",
-    "crowdsecurity/sshd",
-  ]);
+  const collections = payloadStringArray(payload, "collections", []);
+  const serviceLabels = services.map((service) => {
+    if (!service || typeof service !== "object") return "";
+    const record = service as Record<string, unknown>;
+    const label = record["name"] ?? record["slug"];
+    return typeof label === "string" ? label.trim() : "";
+  }).filter(Boolean);
   const steps = [];
   const runStep = async (
     percent: number,
@@ -1362,31 +1425,66 @@ async function applyCyberSecurityProfile(
     );
   }
 
+  await progress(
+    "Resolve selected profile services",
+    18,
+    serviceLabels.length
+      ? `Selected services: ${serviceLabels.join(", ")}.`
+      : "No services selected in this profile.",
+    { services, collections },
+  );
+
+  await progress(
+    "Configure CrowdSec log acquisition",
+    22,
+    "Writing log acquisition for selected services.",
+  );
+  const acquisition = await writeCrowdSecProfileAcquisition(services);
+  await progress(
+    "Configure CrowdSec log acquisition",
+    22,
+    acquisition.length
+      ? `Configured log acquisition for ${
+        acquisition.map((entry) => entry.slug).join(", ")
+      }.`
+      : "No log acquisition paths configured for selected services.",
+    { acquisition },
+  );
+
   steps.push(
     await runStep(25, "Update CrowdSec Hub", "cscli hub update", true),
   );
   const installedCollections = [];
   let percent = 35;
-  for (const collection of collections) {
+  if (collections.length === 0) {
+    await progress(
+      "Install CrowdSec collections",
+      70,
+      "No CrowdSec collections configured for the selected services.",
+      { services, collections, status: "skipped" },
+    );
+  } else {
+    for (const collection of collections) {
+      steps.push(
+        await runStep(
+          Math.min(percent, 85),
+          `Install CrowdSec collection ${collection}`,
+          `cscli collections install ${
+            shellQuote(collection)
+          } || cscli collections inspect ${shellQuote(collection)} >/dev/null`,
+        ),
+      );
+      installedCollections.push(collection);
+      percent += Math.max(5, Math.floor(45 / Math.max(collections.length, 1)));
+    }
     steps.push(
       await runStep(
-        Math.min(percent, 85),
-        `Install CrowdSec collection ${collection}`,
-        `cscli collections install ${
-          shellQuote(collection)
-        } || cscli collections inspect ${shellQuote(collection)} >/dev/null`,
+        90,
+        "Reload CrowdSec",
+        "systemctl reload crowdsec || systemctl restart crowdsec",
       ),
     );
-    installedCollections.push(collection);
-    percent += Math.max(5, Math.floor(45 / Math.max(collections.length, 1)));
   }
-  steps.push(
-    await runStep(
-      90,
-      "Reload CrowdSec",
-      "systemctl reload crowdsec || systemctl restart crowdsec",
-    ),
-  );
 
   await progress(
     "Collect protection status",
