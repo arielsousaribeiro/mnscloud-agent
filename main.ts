@@ -1294,6 +1294,121 @@ async function installCyberSecurityStack(
   };
 }
 
+async function applyCyberSecurityProfile(
+  config: AgentConfig,
+  payload: Record<string, unknown> | null | undefined,
+  progress: (
+    step: string,
+    percent: number,
+    message: string,
+    extra?: Record<string, unknown>,
+  ) => Promise<void>,
+) {
+  assertCapability(config, "linux.service.manage");
+  assertCapability(config, "security.crowdsec.manage");
+
+  const timeoutMs = Math.max(
+    120_000,
+    Math.min(Number(payload?.["timeoutMs"] ?? 600_000), 1_800_000),
+  );
+  const profileName = typeof payload?.["profileName"] === "string"
+    ? payload["profileName"]
+    : "Security profile";
+  const services = Array.isArray(payload?.["services"])
+    ? payload["services"]
+    : [];
+  const collections = payloadStringArray(payload, "collections", [
+    "crowdsecurity/linux",
+    "crowdsecurity/sshd",
+  ]);
+  const steps = [];
+  const runStep = async (
+    percent: number,
+    label: string,
+    command: string,
+    allowFailure = false,
+  ) => {
+    await progress(label, percent, `${label} started.`);
+    const result = await runInstallStep(
+      label,
+      command,
+      timeoutMs,
+      allowFailure,
+    );
+    await progress(
+      label,
+      percent,
+      result.code === 0
+        ? `${label} completed.`
+        : `${label} completed with warnings.`,
+      {
+        status: result.code === 0 ? "running" : "warning",
+        output: result.stdout || result.stderr,
+      },
+    );
+    return result;
+  };
+
+  await progress(
+    "Validate CrowdSec profile prerequisites",
+    10,
+    `Preparing to apply ${profileName}.`,
+    { services, collections },
+  );
+  const cscli = await commandAvailable("cscli");
+  if (!cscli) {
+    throw new Error(
+      "CrowdSec cscli is not available. Install protection first.",
+    );
+  }
+
+  steps.push(
+    await runStep(25, "Update CrowdSec Hub", "cscli hub update", true),
+  );
+  const installedCollections = [];
+  let percent = 35;
+  for (const collection of collections) {
+    steps.push(
+      await runStep(
+        Math.min(percent, 85),
+        `Install CrowdSec collection ${collection}`,
+        `cscli collections install ${
+          shellQuote(collection)
+        } || cscli collections inspect ${shellQuote(collection)} >/dev/null`,
+      ),
+    );
+    installedCollections.push(collection);
+    percent += Math.max(5, Math.floor(45 / Math.max(collections.length, 1)));
+  }
+  steps.push(
+    await runStep(
+      90,
+      "Reload CrowdSec",
+      "systemctl reload crowdsec || systemctl restart crowdsec",
+    ),
+  );
+
+  await progress(
+    "Collect protection status",
+    98,
+    "Collecting security service status after profile apply.",
+  );
+  const status = await collectCyberSecurityStatus(config);
+  return {
+    ...status,
+    protectionStatus: status.firewallStatus === "running" &&
+        status.crowdsecStatus === "running" &&
+        status.bouncerStatus === "running"
+      ? "protected"
+      : status.protectionStatus,
+    profileName,
+    mode: payload?.["mode"] ?? "monitor",
+    services,
+    installedCollections,
+    steps,
+  };
+}
+
 async function collectCyberSecurityStatus(config: AgentConfig) {
   const nft = await commandAvailable("nft");
   const crowdsec = await commandAvailable("crowdsec");
@@ -1411,6 +1526,39 @@ async function executeCyberSecurityJob(
       return;
     }
 
+    if (leasedCommand === "cyber.security.profile.apply") {
+      const result = await applyCyberSecurityProfile(
+        config,
+        job.payload,
+        (step, percent, message, extra = {}) =>
+          reportJobProgress(
+            config,
+            job.jobUUID,
+            agentUUID,
+            agentToken,
+            step,
+            percent,
+            message,
+            extra,
+          ),
+      );
+      await jsonRequest(
+        config,
+        `/agent/jobs/${job.jobUUID}/complete`,
+        agentToken,
+        agentUUID,
+        {
+          jobType: "cyber_security",
+          result,
+        },
+      );
+      log("info", "Cyber Security profile applied.", {
+        jobUUID: job.jobUUID,
+        result,
+      });
+      return;
+    }
+
     await failJob(
       config,
       job.jobUUID,
@@ -1423,7 +1571,10 @@ async function executeCyberSecurityJob(
       "cyber_security",
     );
   } catch (error) {
-    if (leasedCommand === "cyber.security.install") {
+    if (
+      leasedCommand === "cyber.security.install" ||
+      leasedCommand === "cyber.security.profile.apply"
+    ) {
       await reportJobProgress(
         config,
         job.jobUUID,
