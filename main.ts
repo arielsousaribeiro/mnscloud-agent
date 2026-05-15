@@ -1252,12 +1252,13 @@ async function installCyberSecurityStack(
     label: string,
     command: string,
     allowFailure = false,
+    stepTimeoutMs = timeoutMs,
   ) => {
     await progress(label, percent, `${label} started.`);
     const result = await runInstallStep(
       label,
       command,
-      timeoutMs,
+      stepTimeoutMs,
       allowFailure,
     );
     await progress(
@@ -1334,13 +1335,21 @@ async function installCyberSecurityStack(
       "Enable nftables",
       "systemctl enable --now nftables",
       true,
+      90_000,
     ),
   );
   steps.push(
     await runStep(
       74,
       "Enable CrowdSec",
-      "systemctl enable --now crowdsec",
+      [
+        "systemctl enable crowdsec",
+        "systemctl reset-failed crowdsec || true",
+        "timeout 75s systemctl start crowdsec",
+        "systemctl is-active crowdsec",
+      ].join(" && "),
+      false,
+      90_000,
     ),
   );
   await progress(
@@ -1379,15 +1388,25 @@ async function installCyberSecurityStack(
         "    fi;",
         "  };",
         "fi;",
-        "systemctl restart crowdsec",
+        "systemctl reset-failed crowdsec || true",
+        "timeout 75s systemctl restart crowdsec",
+        "systemctl is-active crowdsec",
       ].join(" "),
+      false,
+      90_000,
     ),
   );
   steps.push(
     await runStep(
       98,
       "Restart CrowdSec firewall bouncer",
-      "systemctl restart crowdsec-firewall-bouncer",
+      [
+        "systemctl reset-failed crowdsec-firewall-bouncer || true",
+        "timeout 45s systemctl restart crowdsec-firewall-bouncer",
+        "systemctl is-active crowdsec-firewall-bouncer",
+      ].join(" && "),
+      false,
+      60_000,
     ),
   );
 
