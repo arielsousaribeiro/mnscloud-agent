@@ -1498,12 +1498,13 @@ async function applyCyberSecurityProfile(
     label: string,
     command: string,
     allowFailure = false,
+    stepTimeoutMs = timeoutMs,
   ) => {
     await progress(label, percent, `${label} started.`);
     const result = await runInstallStep(
       label,
       command,
-      timeoutMs,
+      stepTimeoutMs,
       allowFailure,
     );
     await progress(
@@ -1578,6 +1579,8 @@ async function applyCyberSecurityProfile(
           Math.min(percent, 85),
           `Install CrowdSec collection ${collection}`,
           crowdSecCollectionInstallCommand(collection),
+          false,
+          90_000,
         ),
       );
       installedCollections.push(collection);
@@ -1587,7 +1590,9 @@ async function applyCyberSecurityProfile(
       await runStep(
         90,
         "Reload CrowdSec",
-        "systemctl reload crowdsec || systemctl restart crowdsec",
+        "timeout 45s systemctl reload crowdsec || timeout 75s systemctl restart crowdsec",
+        false,
+        90_000,
       ),
     );
   }
