@@ -115,7 +115,7 @@ ensure_deno() {
   fi
   install_packages "$(detect_os)"
   run "install -m 0755 -d /usr/local/deno /usr/local/bin"
-  run "DENO_INSTALL=/usr/local/deno sh -c 'curl -fsSL https://deno.land/install.sh | sh'"
+  run "CI=1 DENO_INSTALL=/usr/local/deno sh -c 'curl -fsSL https://deno.land/install.sh | sh -s -- --no-modify-path'"
   run "ln -sf /usr/local/deno/bin/deno /usr/local/bin/deno"
 }
 
