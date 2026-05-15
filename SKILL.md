@@ -5,7 +5,7 @@ Use este contrato ao alterar o modulo `agent/`.
 ## Fonte de Verdade
 
 - Runtime: `agent/main.ts`
-- Instalador: `scripts/install-agent.sh`
+- Instalador: `agent/scripts/install-agent.sh`
 - Systemd unit gerado: `mnscloud-agent.service`
 - Documentacao: `agent/agent.md`
 - API runtime: `api/routes/agentRoute.ts`, `api/controllers/agentController.ts`, `api/services/agentRuntimeService.ts`
@@ -44,7 +44,7 @@ Nao adicionar acoplamento direto de recurso, modo ou privilegio na identidade pr
 
 - Atualizar documentacao quando mudar contrato do agente.
 - Rodar busca de residuos por nomes antigos.
-- Validar `scripts/install-agent.sh` com `bash -n`.
+- Validar `agent/scripts/install-agent.sh` com `bash -n`.
 - Validar `agent/main.ts` com `deno check`.
 - Validar servicos da API relacionados com `deno check`.
 - Validar frontend com `npm --prefix app run build` quando alterar UI.

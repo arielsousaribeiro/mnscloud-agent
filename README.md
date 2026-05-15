@@ -8,7 +8,7 @@ O agente roda como servico nativo `systemd` no servidor Linux e se comunica com 
 
 - Produto/runtime: `mnscloud-agent`
 - Pasta do projeto: `agent/`
-- Instalador: `scripts/install-agent.sh`
+- Instalador: `agent/scripts/install-agent.sh`
 - Servico: `mnscloud-agent.service`
 - Configuracao local: `/etc/mnscloud/agent/agent.conf`
 - Estado local: `/var/lib/mnscloud/agent`
@@ -17,7 +17,7 @@ O agente roda como servico nativo `systemd` no servidor Linux e se comunica com 
 ## Instalacao
 
 ```bash
-scripts/install-agent.sh
+agent/scripts/install-agent.sh
 ```
 
 O instalador prepara Deno, cria ou reaproveita `/var/lib/mnscloud/agent/agent.uuid`, grava `agent.conf`, instala o unit file e inicia `mnscloud-agent`.
