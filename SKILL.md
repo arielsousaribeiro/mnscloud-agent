@@ -6,6 +6,7 @@ Use this contract when changing the `agent/` module.
 
 - Runtime: `agent/main.ts`
 - Installer: `agent/scripts/install-agent.sh`
+- Update command: `agent/scripts/update-agent.sh`
 - Generated systemd unit: `mnscloud-agent.service`
 - Documentation: `agent/agent.md`
 - API runtime: `api/routes/agentRoute.ts`, `api/controllers/agentController.ts`, `api/services/agentRuntimeService.ts`

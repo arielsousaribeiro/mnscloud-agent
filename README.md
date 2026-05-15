@@ -20,7 +20,7 @@ assignments, and typed jobs.
 ## Installation
 
 ```bash
-agent/scripts/install-agent.sh
+bash scripts/install-agent.sh
 ```
 
 The installer prepares Deno, creates or reuses
@@ -34,6 +34,34 @@ service after writing it.
 Long-running jobs report progress back to the platform, including stage,
 percentage, and error details. Operators should use the MNSCloud UI job details
 view as the primary troubleshooting surface instead of querying the database.
+
+## Updating
+
+Use the explicit update command when this public repository has a newer Agent
+version:
+
+```bash
+cd ~/mnscloud-agent
+bash scripts/update-agent.sh
+```
+
+The update command syncs the repository, reinstalls service files, preserves the
+existing Agent UUID/token, reuses the current API base URL and Agent name from
+`/etc/mnscloud/agent/agent.conf`, then restarts `mnscloud-agent.service`.
+
+Manual equivalent:
+
+```bash
+cd ~/mnscloud-agent
+gh repo sync
+bash scripts/install-agent.sh
+systemctl restart mnscloud-agent.service
+systemctl status mnscloud-agent.service --no-pager
+```
+
+The installer does not automatically pull code on every run. Updates are
+explicit so production servers do not execute new public code unless the
+operator intentionally requests it.
 
 ## Security
 

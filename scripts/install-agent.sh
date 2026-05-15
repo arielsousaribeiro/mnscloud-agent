@@ -123,6 +123,21 @@ normalize_url() {
   printf "%s" "$1" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s#/*$##'
 }
 
+read_config_value() {
+  local config_file="$1" section="$2" key="$3"
+  [[ -r "$config_file" ]] || return 0
+  awk -v section="$section" -v key="$key" '
+    $0 ~ "^\\[" section "\\]$" { in_section = 1; next }
+    $0 ~ "^\\[" { in_section = 0 }
+    in_section && $1 == key {
+      sub("^[^=]*= *", "")
+      sub(" *$", "")
+      print
+      exit
+    }
+  ' "$config_file"
+}
+
 prompt_value() {
   local prompt="$1" default_value="${2:-}" value=""
   if [[ -t 0 && -z "${default_value}" ]]; then
@@ -227,7 +242,7 @@ WantedBy=multi-user.target
 }
 
 main() {
-  local api_base agent_uuid agent_name hostname
+  local api_base agent_uuid agent_name hostname existing_api_base existing_agent_name
   local install_dir="/opt/mnscloud/agent"
   local config_dir="/etc/mnscloud/agent"
   local data_dir="/var/lib/mnscloud/agent"
@@ -238,9 +253,11 @@ main() {
   require_root
   ensure_deno
 
-  api_base="$(normalize_url "${API_BASE:-$(prompt_value "MNSCloud API base URL" "$DEFAULT_API_BASE")}")"
   hostname="$(hostname -f 2>/dev/null || hostname)"
-  agent_name="${AGENT_NAME:-$(prompt_value "Agent name" "$hostname")}"
+  existing_api_base="$(read_config_value "$config_file" "agent" "api_base")"
+  existing_agent_name="$(read_config_value "$config_file" "agent" "name")"
+  api_base="$(normalize_url "${API_BASE:-$(prompt_value "MNSCloud API base URL" "${existing_api_base:-$DEFAULT_API_BASE}")}")"
+  agent_name="${AGENT_NAME:-$(prompt_value "Agent name" "${existing_agent_name:-$hostname}")}"
 
   info "Preparing native mnscloud-agent..."
   run "mkdir -p '${install_dir}' '${config_dir}' '${data_dir}' '${logs_dir}' /var/lib/mnscloud/pabx/media-files"
