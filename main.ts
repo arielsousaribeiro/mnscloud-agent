@@ -1036,17 +1036,38 @@ async function runInstallStep(
     ["-lc", wrappedCommand],
     timeoutMs + 15_000,
   );
+  const diagnostic = result.code !== 0 && label.includes("CrowdSec")
+    ? await runLocalCommand(
+      "sh",
+      [
+        "-lc",
+        [
+          "systemctl status crowdsec.service --no-pager -l 2>&1 || true",
+          "journalctl -u crowdsec.service -n 80 --no-pager 2>&1 || true",
+          "crowdsec -t 2>&1 || true",
+          "find /etc/crowdsec -maxdepth 3 -type f \\( -path '*/mnscloud/*' -o -name 'mnscloud-profile.yaml' \\) -print 2>/dev/null || true",
+        ].join("; echo '---'; "),
+      ],
+      20_000,
+    )
+    : null;
+  const failureDetails = [
+    result.stderr,
+    result.stdout,
+    diagnostic?.stdout,
+    diagnostic?.stderr,
+  ].filter(Boolean).join("\n").slice(-6000);
   const step = {
     label,
     code: result.code,
-    stdout: result.stdout.slice(-2000),
-    stderr: result.stderr.slice(-2000),
+    stdout: [result.stdout, diagnostic?.stdout].filter(Boolean).join("\n")
+      .slice(-2000),
+    stderr: [result.stderr, diagnostic?.stderr].filter(Boolean).join("\n")
+      .slice(-2000),
   };
   if (result.code !== 0 && !allowFailure) {
     throw new Error(
-      `${label} failed: ${
-        result.stderr || result.stdout || `exit ${result.code}`
-      }`,
+      `${label} failed: ${failureDetails || `exit ${result.code}`}`,
     );
   }
   return step;
@@ -1350,7 +1371,16 @@ async function installCyberSecurityStack(
     await runStep(
       95,
       "Restart CrowdSec",
-      "systemctl restart crowdsec",
+      [
+        "if command -v crowdsec >/dev/null 2>&1; then",
+        "  crowdsec -t >/tmp/mnscloud-crowdsec-test.log 2>&1 || {",
+        "    if grep -q 'mnscloud-profile.yaml\\|/etc/crowdsec/acquis.d/mnscloud-profile.yaml' /tmp/mnscloud-crowdsec-test.log 2>/dev/null; then",
+        "      mv /etc/crowdsec/acquis.d/mnscloud-profile.yaml /etc/crowdsec/acquis.d/mnscloud-profile.yaml.disabled.$(date +%s) 2>/dev/null || true;",
+        "    fi;",
+        "  };",
+        "fi;",
+        "systemctl restart crowdsec",
+      ].join(" "),
     ),
   );
   steps.push(
