@@ -37,12 +37,15 @@ Do not add direct resource, mode, or privilege coupling to the Agent's primary i
 ## Security
 
 - Communication is outbound-only over HTTPS.
+- This repository is public by design and consumes the MNSCloud API contract.
 - The installer does not define tenant, resource, or function ownership.
 - The Agent declares local capabilities; the API decides delivery by capability and assignment.
 - The Agent token lives at `/var/lib/mnscloud/agent/agent.token`.
 - Permanent storage credentials stay only in the API.
 - Jobs use temporary authorization, preferably signed URLs.
 - Local commands must be typed and allowlisted in the runtime.
+- Do not commit secrets, customer data, production IPs, tenant-specific values, private business
+  rules, static master tokens, or API bypasses.
 
 ## Checklist
 
