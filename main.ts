@@ -1015,6 +1015,35 @@ function crowdSecCollectionInstallCommand(collection: string) {
   return `(${regularInstall}) || (cscli hub update --force >/dev/null 2>&1 || true; ${regularInstall}) || (${manualInstall})`;
 }
 
+function parseJsonArray(text: string) {
+  if (!text.trim()) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function collectCrowdSecSecurityEvents(config: AgentConfig) {
+  const cscli = await commandAvailable("cscli");
+  if (!cscli) return { alerts: [], decisions: [] };
+
+  const alertsResult = await runLocalCommand("sh", [
+    "-lc",
+    "cscli alerts list -o json 2>/dev/null || cscli alerts list --output json 2>/dev/null || true",
+  ], config.commandTimeoutMs);
+  const decisionsResult = await runLocalCommand("sh", [
+    "-lc",
+    "cscli decisions list -o json 2>/dev/null || cscli decisions list --output json 2>/dev/null || true",
+  ], config.commandTimeoutMs);
+
+  return {
+    alerts: parseJsonArray(alertsResult.stdout).slice(0, 200),
+    decisions: parseJsonArray(decisionsResult.stdout).slice(0, 500),
+  };
+}
+
 function assertCapability(config: AgentConfig, capability: string) {
   if (!config.capabilities[capability]) {
     throw new Error(`Capability is disabled: ${capability}`);
@@ -1627,6 +1656,7 @@ async function collectCyberSecurityStatus(config: AgentConfig) {
     : nft && (crowdsec || cscli) && bouncer
     ? "partial"
     : "unprotected";
+  const securityEvents = await collectCrowdSecSecurityEvents(config);
 
   return {
     hostname,
@@ -1639,6 +1669,8 @@ async function collectCyberSecurityStatus(config: AgentConfig) {
     crowdsecStatus,
     bouncerStatus,
     protectionStatus,
+    crowdsecAlerts: securityEvents.alerts,
+    crowdsecDecisions: securityEvents.decisions,
     binaries: { nft, crowdsec, cscli, bouncer },
   };
 }
