@@ -988,7 +988,7 @@ async function writeCrowdSecProfileAcquisition(services: unknown[]) {
 function crowdSecCollectionInstallCommand(collection: string) {
   const quotedCollection = shellQuote(collection);
   const regularInstall =
-    `cscli collections install ${quotedCollection} || cscli collections inspect ${quotedCollection} >/dev/null`;
+    `cscli collections inspect ${quotedCollection} >/dev/null 2>&1 || cscli collections install ${quotedCollection}`;
   if (collection !== "crowdsecurity/freeswitch") return regularInstall;
 
   const baseUrl = "https://raw.githubusercontent.com/crowdsecurity/hub/master";
@@ -1013,6 +1013,26 @@ function crowdSecCollectionInstallCommand(collection: string) {
   ].join(" && ");
 
   return `(${regularInstall}) || (cscli hub update --force >/dev/null 2>&1 || true; ${regularInstall}) || (${manualInstall})`;
+}
+
+function packagesInstalledCommand(packages: string[]) {
+  const checks = packages
+    .map((pkg) =>
+      `dpkg-query -W -f='\\${"${Status}"}' ${
+        shellQuote(pkg)
+      } 2>/dev/null | grep -qx 'install ok installed'`
+    )
+    .join(" && ");
+  return `! (${checks})`;
+}
+
+async function commandOk(command: string, timeoutMs = 5000) {
+  const result = await runLocalCommand("sh", ["-lc", command], timeoutMs);
+  return result.code === 0;
+}
+
+async function stepResult(label: string, stdout: string) {
+  return { label, code: 0, stdout, stderr: "" };
 }
 
 function parseJsonArray(text: string) {
@@ -1132,6 +1152,25 @@ async function ensureCrowdSecRepository(timeoutMs: number) {
   );
 }
 
+async function ensureCrowdSecHubReady(timeoutMs: number) {
+  if (
+    await commandOk(
+      "test -d /var/lib/crowdsec/data/hub && find /var/lib/crowdsec/data/hub -type f | grep -q .",
+    )
+  ) {
+    return await stepResult(
+      "CrowdSec Hub already ready",
+      "CrowdSec Hub cache already exists.",
+    );
+  }
+  return await runInstallStep(
+    "Update CrowdSec Hub",
+    "cscli hub update",
+    timeoutMs,
+    true,
+  );
+}
+
 async function resolveCrowdSecFirewallBouncerPackage() {
   const candidates = [
     "crowdsec-firewall-bouncer-nftables",
@@ -1234,7 +1273,7 @@ async function configureCrowdSecFirewallBouncer(timeoutMs: number) {
   return await runInstallStep(
     "Configure CrowdSec firewall bouncer",
     script,
-    timeoutMs,
+    Math.min(timeoutMs, 60_000),
   );
 }
 
@@ -1275,6 +1314,9 @@ async function installCyberSecurityStack(
     "crowdsecurity/linux",
     "crowdsecurity/sshd",
   ]);
+  const bouncerPackage = await resolveCrowdSecFirewallBouncerPackage();
+  const basePackages = ["ca-certificates", "curl", "gnupg", "jq", "nftables"];
+  const securityPackages = ["crowdsec", bouncerPackage, "nftables"];
   const steps = [];
   const runStep = async (
     percent: number,
@@ -1314,14 +1356,24 @@ async function installCyberSecurityStack(
     await runStep(
       10,
       "Refresh APT metadata",
-      "DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true update -y",
+      `if ${
+        packagesInstalledCommand([...basePackages, "crowdsec"])
+      }; then DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true update -y; else echo 'APT metadata refresh skipped; required packages are already installed.'; fi`,
+      true,
+      75_000,
     ),
   );
   steps.push(
     await runStep(
       20,
       "Install base packages",
-      "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl gnupg jq nftables",
+      `if ${
+        packagesInstalledCommand(basePackages)
+      }; then DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${
+        basePackages.map(shellQuote).join(" ")
+      }; else echo 'Base packages already installed.'; fi`,
+      false,
+      90_000,
     ),
   );
   await progress(
@@ -1329,12 +1381,16 @@ async function installCyberSecurityStack(
     32,
     "Checking CrowdSec package repository.",
   );
-  steps.push(await ensureCrowdSecRepository(timeoutMs));
+  steps.push(await ensureCrowdSecRepository(Math.min(timeoutMs, 90_000)));
   steps.push(
     await runStep(
       42,
       "Refresh CrowdSec APT metadata",
-      "DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true update -y",
+      `if ${
+        packagesInstalledCommand(securityPackages)
+      }; then DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true update -y; else echo 'CrowdSec APT metadata refresh skipped; security packages are already installed.'; fi`,
+      true,
+      75_000,
     ),
   );
   await progress(
@@ -1342,7 +1398,6 @@ async function installCyberSecurityStack(
     48,
     "Detecting available CrowdSec firewall bouncer package.",
   );
-  const bouncerPackage = await resolveCrowdSecFirewallBouncerPackage();
   await progress(
     "Select CrowdSec firewall bouncer package",
     48,
@@ -1353,9 +1408,13 @@ async function installCyberSecurityStack(
     await runStep(
       55,
       "Install CrowdSec and nftables firewall bouncer",
-      `DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends crowdsec ${
-        shellQuote(bouncerPackage)
-      } nftables`,
+      `if ${
+        packagesInstalledCommand(securityPackages)
+      }; then DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${
+        securityPackages.map(shellQuote).join(" ")
+      }; else echo 'CrowdSec and firewall bouncer already installed.'; fi`,
+      false,
+      120_000,
     ),
   );
   steps.push(
@@ -1386,15 +1445,10 @@ async function installCyberSecurityStack(
     80,
     "Configuring local bouncer credentials.",
   );
-  steps.push(await configureCrowdSecFirewallBouncer(timeoutMs));
   steps.push(
-    await runStep(
-      86,
-      "Update CrowdSec Hub",
-      "cscli hub update",
-      true,
-    ),
+    await configureCrowdSecFirewallBouncer(Math.min(timeoutMs, 60_000)),
   );
+  steps.push(await ensureCrowdSecHubReady(Math.min(timeoutMs, 75_000)));
   for (const collection of collections) {
     steps.push(
       await runStep(
@@ -1402,6 +1456,7 @@ async function installCyberSecurityStack(
         `Install CrowdSec collection ${collection}`,
         `${crowdSecCollectionInstallCommand(collection)} || true`,
         true,
+        60_000,
       ),
     );
   }
@@ -1560,9 +1615,7 @@ async function applyCyberSecurityProfile(
     { acquisition },
   );
 
-  steps.push(
-    await runStep(25, "Update CrowdSec Hub", "cscli hub update", true),
-  );
+  steps.push(await ensureCrowdSecHubReady(Math.min(timeoutMs, 75_000)));
   const installedCollections = [];
   let percent = 35;
   if (collections.length === 0) {
@@ -1580,7 +1633,7 @@ async function applyCyberSecurityProfile(
           `Install CrowdSec collection ${collection}`,
           crowdSecCollectionInstallCommand(collection),
           false,
-          90_000,
+          60_000,
         ),
       );
       installedCollections.push(collection);
