@@ -1,42 +1,37 @@
 # mnscloud-agent
 
-Agente local genérico da MNSCloud.
+Agente local unico e generico da MNSCloud.
 
-O agente roda no servidor onde existe algum recurso operacional da plataforma e se comunica com a API central por HTTPS outbound. Ele não recebe credenciais permanentes de storage; quando precisa executar uma ação sensível, a API entrega um job com autorização temporária e escopo mínimo.
-
-A primeira capacidade operacional suportada pela API é `pabx`, usada para upload assíncrono de gravações geradas por Asterisk ou FreeSWITCH e para sincronização offline de media files do PABX. Essa capacidade não é configurada no instalador; ela é atribuída depois pela aplicação.
+O agente roda como servico nativo `systemd` no servidor Linux e se comunica com a API central por HTTPS outbound. Existe somente um runtime: ele executa o que estiver permitido pelas capabilities declaradas no `agent.conf`, pelos assignments da API e pelo tipo de job recebido.
 
 ## Contrato
 
-- Nome do produto/runtime: `mnscloud-agent`
+- Produto/runtime: `mnscloud-agent`
 - Pasta do projeto: `agent/`
-- Dockerfile: `agent/Dockerfile`
-- Container: `mnscloud-agent`
-- Compose local: `/opt/mnscloud/agent/docker-compose.agent.yml`
-- Configuração local: `/etc/mnscloud/agent/agent.conf`
+- Instalador: `scripts/install-agent.sh`
+- Servico: `mnscloud-agent.service`
+- Configuracao local: `/etc/mnscloud/agent/agent.conf`
 - Estado local: `/var/lib/mnscloud/agent`
 - Logs locais: `/var/log/mnscloud/agent`
 
-## Instalação
+## Instalacao
 
 ```bash
 scripts/install-agent.sh
 ```
 
-O instalador detecta Docker/Compose, oferece instalar Docker quando necessário, gera ou reaproveita `/var/lib/mnscloud/agent/agent.uuid`, cria o `agent.conf` e sobe o container `mnscloud-agent`.
+O instalador prepara Deno, cria ou reaproveita `/var/lib/mnscloud/agent/agent.uuid`, grava `agent.conf`, instala o unit file e inicia `mnscloud-agent`.
 
-Depois da instalação, copie o UUID exibido pelo instalador e cadastre o agente na aplicação MNSCloud. A aplicação/API define as capacidades, recursos e comandos permitidos para esse agente.
+Depois da instalacao, cadastre o UUID na aplicacao MNSCloud e gere o token. O token fica em `/var/lib/mnscloud/agent/agent.token`; apos gravar o token, reinicie o servico.
 
-## Segurança
+## Seguranca
 
-- A comunicação é sempre outbound para a API.
-- O agente não recebe engine, recurso ou função no instalador.
-- A identidade local usa `agent.uuid` e, após ativação pela aplicação, `agent.token`.
-- O agente lê apenas caminhos permitidos em `recordings.roots`.
-- Uploads usam URL assinada de curta duração gerada pela API.
-- Quando configurado com `recordings.delete_after_upload = true`, a cópia local
-  é removida somente depois que o upload for aceito e confirmado na API.
-- Media files offline são sincronizados para `media_files.roots` usando jobs
-  temporários da API. O agente não recebe credenciais permanentes de storage.
+- Comunicacao sempre outbound para a API.
+- Um unico agente; limites sao por permissao do sistema, capabilities e jobs.
+- Capabilities sao declaradas pelo host e sincronizadas no heartbeat.
+- Credenciais permanentes de storage ficam somente na API.
+- Jobs usam autorizacao temporaria, como URLs assinadas.
+- Arquivos locais so podem ser lidos/escritos nos roots configurados.
+- Gravacoes locais podem ser removidas somente depois de upload confirmado.
 
-Veja [agent.md](./agent.md) para a documentação completa do módulo e [SKILL.md](./SKILL.md) para o contrato de evolução técnica.
+Veja [agent.md](./agent.md) para o desenho completo e [SKILL.md](./SKILL.md) para o contrato de evolucao tecnica.

@@ -12,6 +12,7 @@ type AgentConfig = {
   deleteAfterUpload: boolean;
   mediaRoots: string[];
   mediaMounts: Array<{ hostRoot: string; containerRoot: string }>;
+  capabilities: Record<string, boolean>;
   asteriskCli: string;
   freeswitchCli: string;
   asteriskAmiHost: string;
@@ -26,7 +27,7 @@ type AgentConfig = {
 
 type LeaseJob = {
   jobUUID: string;
-  jobType?: 'recording_upload' | 'media_file_sync' | 'pabx_command' | string | null;
+  jobType?: 'recording_upload' | 'media_file_sync' | 'pabx_command' | 'cyber_security' | string | null;
   action?: 'sync' | 'delete' | string | null;
   localPath?: string | null;
   engine?: string | null;
@@ -74,6 +75,14 @@ function parseIni(text: string): IniConfig {
     if (key) config[section][key] = value;
   }
   return config;
+}
+
+function capabilitiesFromConfig(config: IniConfig) {
+  const capabilities: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(config.capabilities ?? {})) {
+    capabilities[key] = getBoolean(config, 'capabilities', key, false);
+  }
+  return capabilities;
 }
 
 function getConfigValue(
@@ -146,7 +155,7 @@ async function loadConfig(): Promise<AgentConfig> {
         parsed,
         'recordings',
         'roots',
-        '/recordings/freeswitch,/recordings/asterisk',
+        '/var/lib/freeswitch/recordings,/var/spool/asterisk/monitor',
       ),
     ),
     recordingMounts: parseRecordingMounts(
@@ -154,7 +163,7 @@ async function loadConfig(): Promise<AgentConfig> {
         parsed,
         'recordings',
         'mounts',
-        '/var/lib/freeswitch/recordings=/recordings/freeswitch,/var/spool/asterisk/monitor=/recordings/asterisk',
+        '',
       ),
     ),
     deleteAfterUpload: getBoolean(
@@ -168,7 +177,7 @@ async function loadConfig(): Promise<AgentConfig> {
         parsed,
         'media_files',
         'roots',
-        '/media-files',
+        '/var/lib/mnscloud/pabx/media-files',
       ),
     ),
     mediaMounts: parseRecordingMounts(
@@ -176,9 +185,10 @@ async function loadConfig(): Promise<AgentConfig> {
         parsed,
         'media_files',
         'mounts',
-        '/var/lib/mnscloud/pabx/media-files=/media-files',
+        '',
       ),
     ),
+    capabilities: capabilitiesFromConfig(parsed),
     asteriskCli: getConfigValue(parsed, 'commands', 'asterisk_cli', 'asterisk'),
     freeswitchCli: getConfigValue(parsed, 'commands', 'freeswitch_cli', 'fs_cli'),
     asteriskAmiHost: getConfigValue(parsed, 'commands', 'asterisk_ami_host', '127.0.0.1'),
@@ -262,6 +272,7 @@ async function heartbeat(
     recordingMounts: config.recordingMounts,
     mediaRoots: config.mediaRoots,
     mediaMounts: config.mediaMounts,
+    capabilities: config.capabilities,
   });
 }
 
@@ -789,6 +800,86 @@ async function executePabxCommandJob(
   }
 }
 
+async function commandAvailable(command: string) {
+  const result = await runLocalCommand('sh', ['-lc', `command -v ${command}`], 3000);
+  return result.code === 0 ? result.stdout.split(/\r?\n/)[0] || command : null;
+}
+
+async function commandText(command: string, fallback = '') {
+  const result = await runLocalCommand('sh', ['-lc', command], 8000);
+  return result.code === 0 ? result.stdout : fallback;
+}
+
+async function collectCyberSecurityStatus(config: AgentConfig) {
+  const nft = await commandAvailable('nft');
+  const crowdsec = await commandAvailable('crowdsec');
+  const cscli = await commandAvailable('cscli');
+  const bouncer = await commandAvailable('crowdsec-firewall-bouncer');
+  const hostname = await commandText('hostname -f 2>/dev/null || hostname');
+  const kernelVersion = await commandText('uname -r');
+  const osName = await commandText('. /etc/os-release 2>/dev/null && printf "%s" "${NAME:-Linux}"', 'Linux');
+  const osVersion = await commandText('. /etc/os-release 2>/dev/null && printf "%s" "${VERSION_ID:-}"');
+  const privateIP = await commandText("ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"src\") {print $(i+1); exit}}'");
+  const nftRules = nft ? await runLocalCommand('nft', ['list', 'ruleset'], config.commandTimeoutMs) : null;
+  const crowdsecActive = await runLocalCommand('sh', ['-lc', 'systemctl is-active crowdsec 2>/dev/null || true'], 3000);
+  const bouncerActive = await runLocalCommand('sh', ['-lc', 'systemctl is-active crowdsec-firewall-bouncer 2>/dev/null || true'], 3000);
+
+  return {
+    hostname,
+    privateIP,
+    osName,
+    osVersion,
+    kernelVersion,
+    firewallBackend: 'nftables',
+    firewallStatus: nft ? (nftRules?.code === 0 ? 'running' : 'error') : 'missing',
+    crowdsecStatus: crowdsec || cscli ? (crowdsecActive.stdout === 'active' ? 'running' : 'stopped') : 'missing',
+    bouncerStatus: bouncer ? (bouncerActive.stdout === 'active' ? 'running' : 'stopped') : 'missing',
+    protectionStatus: nft && (crowdsec || cscli) && bouncer ? 'partial' : 'unprotected',
+    binaries: { nft, crowdsec, cscli, bouncer },
+  };
+}
+
+async function executeCyberSecurityJob(
+  job: LeaseJob,
+  config: AgentConfig,
+  agentUUID: string,
+  agentToken: string,
+) {
+  const command = String(job.commandType ?? job.payload?.command ?? job.payload?.['command'] ?? '');
+  const leasedCommand = String((job as Record<string, unknown>)['command'] ?? command);
+  try {
+    if (leasedCommand === 'cyber.security.status') {
+      const result = await collectCyberSecurityStatus(config);
+      await jsonRequest(config, `/agent/jobs/${job.jobUUID}/complete`, agentToken, agentUUID, {
+        jobType: 'cyber_security',
+        result,
+      });
+      log('info', 'Cyber Security status collected.', { jobUUID: job.jobUUID, result });
+      return;
+    }
+
+    await failJob(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      'CYBER_COMMAND_NOT_IMPLEMENTED',
+      `${leasedCommand || 'unknown'} is modeled but not implemented by this agent version yet.`,
+      'cyber_security',
+    );
+  } catch (error) {
+    await failJob(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      'CYBER_COMMAND_FAILED',
+      error instanceof Error ? error.message : String(error),
+      'cyber_security',
+    );
+  }
+}
+
 async function pollJobs(
   config: AgentConfig,
   agentUUID: string,
@@ -806,6 +897,8 @@ async function pollJobs(
       await syncMediaFileJob(job, config, agentUUID, agentToken);
     } else if (job.jobType === 'pabx_command') {
       await executePabxCommandJob(job, config, agentUUID, agentToken);
+    } else if (job.jobType === 'cyber_security') {
+      await executeCyberSecurityJob(job, config, agentUUID, agentToken);
     } else {
       await uploadJob(job, config, agentUUID, agentToken);
     }

@@ -1,27 +1,23 @@
 # MNSCloud Agent
 
-## Visão Geral
+## Visao Geral
 
-`mnscloud-agent` é o agente local genérico da plataforma. Ele não é um agente PABX por nome; PABX é apenas a primeira capacidade suportada. O mesmo runtime deve aceitar novas capacidades no futuro, como `db`, `api`, `server`, `sbc` ou `softswitch`, sem mudar nome de container, pasta, configuração ou API pública.
+`mnscloud-agent` e o agente local generico da plataforma. Ele nao e um agente PABX, firewall ou Docker por nome; esses comportamentos entram como capabilities e jobs. Existe um unico runtime. O limite real vem das permissoes do sistema operacional, do `agent.conf`, das capabilities sincronizadas e dos assignments cadastrados na API.
 
 ## Arquitetura
 
-O agente roda próximo ao recurso operacional. No caso atual, ele roda no host onde Asterisk ou FreeSWITCH gravam arquivos de áudio. A API central controla identidade, permissões, capacidades, assignments e jobs.
-
-Fluxo:
-
 1. O instalador cria `/etc/mnscloud/agent/agent.conf`.
 2. O instalador gera ou reaproveita `/var/lib/mnscloud/agent/agent.uuid`.
-3. O operador cadastra o UUID na aplicação MNSCloud.
-4. A aplicação/API ativa o agente, define seu tenant, token, capacidades e assignments.
-5. O agente envia heartbeat em `POST /api/v1/agent/heartbeat` quando `agent.token` existir.
-6. O agente busca jobs em `POST /api/v1/agent/jobs/lease`.
-7. Para gravações, a API fornece URL assinada temporária.
-8. O agente faz upload e confirma ou falha o job.
+3. O operador cadastra o UUID na aplicacao MNSCloud.
+4. A aplicacao gera o token e o operador grava `/var/lib/mnscloud/agent/agent.token`.
+5. O agente envia heartbeat em `POST /api/v1/agent/heartbeat`.
+6. O heartbeat sincroniza capabilities declaradas pelo host.
+7. A API entrega jobs em `POST /api/v1/agent/jobs/lease` conforme capability e assignment.
+8. O agente executa o job localmente e confirma sucesso ou falha.
 
-## Configuração
+## Configuracao
 
-Arquivo canônico local:
+Arquivo canonico local:
 
 ```text
 /etc/mnscloud/agent/agent.conf
@@ -31,8 +27,8 @@ Formato:
 
 ```ini
 [agent]
-name = asterisk-dev1
-hostname = asterisk-dev1.local
+name = server-01
+hostname = server-01.local
 api_base = https://dev1.publichost.cloud
 version = 0.1.0
 poll_interval_ms = 15000
@@ -42,14 +38,27 @@ heartbeat_interval_ms = 60000
 agent_uuid_file = /var/lib/mnscloud/agent/agent.uuid
 agent_token_file = /var/lib/mnscloud/agent/agent.token
 
+[capabilities]
+linux.status = true
+linux.package.install = true
+linux.service.manage = true
+linux.file.manage = true
+security.nftables.manage = true
+security.crowdsec.manage = true
+security.logs.read = true
+voip.asterisk.manage = false
+voip.freeswitch.manage = false
+docker.manage = false
+shell.exec = false
+
 [recordings]
-roots = /recordings/freeswitch,/recordings/asterisk
-mounts = /var/lib/freeswitch/recordings=/recordings/freeswitch,/var/spool/asterisk/monitor=/recordings/asterisk
+roots = /var/lib/freeswitch/recordings,/var/spool/asterisk/monitor
+mounts =
 delete_after_upload = true
 
 [media_files]
-roots = /media-files
-mounts = /var/lib/mnscloud/pabx/media-files=/media-files
+roots = /var/lib/mnscloud/pabx/media-files
+mounts =
 
 [commands]
 asterisk_cli = asterisk
@@ -64,94 +73,67 @@ freeswitch_esl_password =
 timeout_ms = 15000
 ```
 
-Não usar `.env` para o agente. Seguir `agent.conf` para configuração local e `/var/lib/mnscloud/agent` para identidade/estado.
+Nao usar `.env` para o agente. Identidade e estado ficam em `/var/lib/mnscloud/agent`.
 
 ## Banco de Dados
 
-Modelo canônico:
+Modelo canonico:
 
-- `MonitoringAgent`: identidade, token, hostname, versão, status, heartbeat e tenant.
-- `MonitoringAgentCapability`: capacidades do agente, como `pabx`.
-- `MonitoringAgentAssignment`: recursos atribuídos ao agente, como `voip_pabx_server`.
+- `MonitoringAgent`: identidade, token, hostname, versao, status, heartbeat e tenant.
+- `MonitoringAgentCapability`: capabilities declaradas pelo agente, como `linux.status`, `security.crowdsec.manage`, `voip.asterisk.manage`.
+- `MonitoringAgentAssignment`: recursos atribuidos ao agente, como `voip_pabx_server` ou futuros recursos de cyber security.
 
-Não adicionar colunas de tipo ou recurso diretamente em `MonitoringAgent`. A relação deve ser sempre por capability e assignment.
+Nao adicionar colunas de tipo, modo ou recurso diretamente em `MonitoringAgent`. A relacao deve ser sempre por capability e assignment.
 
 ## API
 
-Endpoints canônicos:
+Endpoints canonicos:
 
 - `POST /api/v1/agent/heartbeat`
 - `POST /api/v1/agent/jobs/lease`
 - `POST /api/v1/agent/jobs/:uuid/complete`
 - `POST /api/v1/agent/jobs/:uuid/fail`
 
-Headers canônicos:
+Headers canonicos:
 
 - `Authorization: Bearer <token>`
 - `X-MNSCloud-Agent-UUID: <uuid>`
 
-Não criar endpoints específicos por capacidade. O PABX é tratado por payload/capability dentro do agente genérico.
+Nao criar endpoints especificos por tecnologia. PABX, cyber security e futuras funcoes devem trafegar pelo mesmo lease/complete/fail com `jobType` e payload tipado.
 
-## Docker
+## Capabilities
 
-Container:
+Capabilities sao nomes estaveis e granulares. Exemplos:
 
-```text
-mnscloud-agent
-```
+- `linux.status`
+- `linux.package.install`
+- `linux.service.manage`
+- `linux.file.manage`
+- `security.nftables.manage`
+- `security.crowdsec.manage`
+- `security.logs.read`
+- `voip.asterisk.manage`
+- `voip.freeswitch.manage`
+- `docker.manage`
+- `shell.exec`
 
-Imagem local:
+O agente declara capabilities no heartbeat. A API usa essas capabilities junto com assignments para decidir quais jobs podem ser entregues.
 
-```text
-mnscloud/agent:local
-```
+## PABX
 
-O container deve ser restrito:
+Para PABX, o assignment continua sendo `voip_pabx_server`, mas a capability agora e do engine:
 
-- `read_only: true`
-- `network_mode: host`
-- `cap_drop: [ALL]`
-- `security_opt: no-new-privileges:true`
-- `/etc/mnscloud/agent` montado somente leitura
-- `/var/lib/mnscloud/agent` gravável para `agent.uuid` e `agent.token`
-- diretórios de gravação montados somente nos roots configurados e com escrita limitada
-  para remover a cópia local após upload confirmado
+- Asterisk: `voip.asterisk.manage`
+- FreeSWITCH: `voip.freeswitch.manage`
 
-## Capacidade PABX
+Com assignment e capability compativeis, o agente pode:
 
-Quando o agente recebe a capacidade `pabx` e assignment para um `voip_pabx_server`, ele faz:
+- sincronizar upload de gravacoes;
+- remover gravacao local apos upload confirmado;
+- sincronizar media files offline;
+- executar comandos locais permitidos por job;
+- usar AMI/ESL local quando configurado ou CLI local como fallback.
 
-- heartbeat do host;
-- lease de jobs de upload de gravações;
-- lease de jobs de sincronização offline de media files;
-- lease de jobs tipados de comando remoto para validação/controle do servidor;
-- leitura de arquivo local validada por path allowlist;
-- upload por URL assinada;
-- confirmação ou falha do job.
-- remoção da gravação local quando `recordings.delete_after_upload = true` e o
-  upload já tiver sido confirmado pela API.
+## Cyber Security
 
-Asterisk e FreeSWITCH gravam primeiro em filesystem local. O agente é responsável por mover a gravação para storage externo quando o PABX estiver configurado para storage.
-
-Para media files offline, a API entrega um job `media_file_sync` com ação `sync`
-ou `delete`. Na ação `sync`, o agente baixa o arquivo por URL temporária
-assinada ou por endpoint autenticado do próprio job, grava atomicamente no
-diretório permitido e confirma. Na ação `delete`, remove a cópia local e confirma.
-Credenciais permanentes de storage continuam somente na API.
-
-Para comandos remotos, o executor padrão recomendado é `agent`. A API cria um
-job tipado e o agente executa localmente somente comandos permitidos. Quando
-`commands.asterisk_ami_*` ou `commands.freeswitch_esl_*` estiverem configurados,
-o agente usa AMI/ESL local via `127.0.0.1`; caso contrário, tenta os CLIs
-configurados como fallback (`asterisk`/`fs_cli`). As credenciais de controle
-ficam no `agent.conf` do host, não trafegam como segredo permanente pelo job.
-O executor direto `esl_ami` continua disponível na API/worker como alternativa
-operacional quando selecionado no servidor ou herdado dos parâmetros.
-
-## Regras de Evolução
-
-- Não criar nomes específicos por tecnologia ou função.
-- Não usar `.env` como contrato de configuração do agente.
-- Não colocar credencial permanente de storage no agente.
-- Novas funções entram como capabilities e assignments.
-- A interface de monitoramento deve ler `MonitoringAgent` e suas relações, não tabelas específicas de cada recurso.
+Cyber security usa o mesmo runtime. Jobs como instalacao/configuracao de nftables e CrowdSec devem exigir capabilities explicitas (`security.nftables.manage`, `security.crowdsec.manage`) e assignments adequados.
