@@ -3,7 +3,7 @@ set -euo pipefail
 
 LOG_PREFIX="[install-agent]"
 DRY_RUN=false
-DEFAULT_API_BASE="${MNSCLOUD_API_BASE:-https://dev1.publichost.cloud}"
+DEFAULT_API_BASE="${MNSCLOUD_API_BASE:-https://api.publichost.cloud}"
 AGENT_USER="root"
 AGENT_GROUP="root"
 
