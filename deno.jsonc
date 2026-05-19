@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "start": "deno run --allow-read --allow-write --allow-net --allow-run main.ts",
+    "start": "deno run --allow-read --allow-write --allow-net --allow-run --allow-env main.ts",
     "check": "deno check main.ts",
     "fmt": "deno fmt"
   },

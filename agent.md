@@ -66,6 +66,21 @@ delete_after_upload = true
 roots = /var/lib/mnscloud/pabx/media-files
 mounts =
 
+[nginx_edge]
+config_dir = /etc/nginx/mnscloud/theme-domains
+acme_root = /var/www/certbot
+ssl_live_dir = /etc/letsencrypt/live
+ssl_archive_dir = /etc/letsencrypt/archive
+ssl_renewal_dir = /etc/letsencrypt/renewal
+app_upstream = $app_upstream
+api_upstream = $api_upstream
+test_command = nginx -t
+reload_command = systemctl reload nginx
+
+[certbot]
+command = certbot
+default_email =
+
 [commands]
 asterisk_cli = asterisk
 freeswitch_cli = fs_cli
@@ -134,6 +149,8 @@ Capabilities are stable, granular names. Examples:
 - `security.nftables.manage`
 - `security.crowdsec.manage`
 - `security.logs.read`
+- `nginx-edge.manage`
+- `certbot.manage`
 - `voip.asterisk.manage`
 - `voip.freeswitch.manage`
 - `docker.manage`
@@ -182,3 +199,37 @@ firewall bouncer for nftables using a local bouncer API key.
 Long-running cyber security jobs report progress before and after each major
 step so the platform can display the current stage, percentage, and failure
 details without requiring direct database access.
+
+## Nginx Edge And Certbot
+
+The Agent can manage public edge Nginx configuration and certificates when it is
+installed on the Nginx edge host and declares these capabilities:
+
+- `nginx-edge.manage`
+- `certbot.manage`
+
+The edge host keeps certificate private keys local under `/etc/letsencrypt`.
+Nginx reads certificates directly from local files; certificates are not copied
+through the API or shared with other modules.
+
+Implemented Nginx edge commands:
+
+- `nginx.edge.domain.activate`: writes or refreshes the domain Nginx config.
+- `nginx.edge.domain.remove`: removes the domain config and local certificate
+  files.
+- `nginx.edge.domain.inspect`: reports whether config and certificate files
+  exist.
+- `nginx.edge.config.test`: runs the configured Nginx config test command.
+- `nginx.edge.reload`: runs the configured Nginx reload command.
+
+Implemented Certbot commands:
+
+- `certbot.certificate.issue`: creates the HTTP challenge config, issues a
+  certificate with webroot validation, then refreshes the HTTPS config.
+- `certbot.certificates.renew`: renews existing certificates and reloads Nginx
+  through the configured deploy hook.
+- `certbot.certificate.inspect`: reports local certificate paths for a domain.
+
+For HTTP-01 validation, the Nginx edge host must serve
+`/.well-known/acme-challenge/` from the configured `acme_root`, normally
+`/var/www/certbot`.

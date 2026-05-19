@@ -13,6 +13,17 @@ type AgentConfig = {
   mediaRoots: string[];
   mediaMounts: Array<{ hostRoot: string; containerRoot: string }>;
   capabilities: Record<string, boolean>;
+  nginxEdgeConfigDir: string;
+  nginxEdgeAcmeRoot: string;
+  nginxEdgeSslLiveDir: string;
+  nginxEdgeSslArchiveDir: string;
+  nginxEdgeSslRenewalDir: string;
+  nginxEdgeAppUpstream: string;
+  nginxEdgeApiUpstream: string;
+  nginxEdgeTestCommand: string;
+  nginxEdgeReloadCommand: string;
+  certbotCommand: string;
+  certbotDefaultEmail: string;
   asteriskCli: string;
   freeswitchCli: string;
   asteriskAmiHost: string;
@@ -32,6 +43,8 @@ type LeaseJob = {
     | "media_file_sync"
     | "pabx_command"
     | "cyber_security"
+    | "nginx_edge"
+    | "certbot"
     | string
     | null;
   action?: "sync" | "delete" | string | null;
@@ -49,7 +62,8 @@ type LeaseJob = {
 
 type IniConfig = Record<string, Record<string, string>>;
 
-const CONFIG_PATH = "/etc/mnscloud/agent/agent.conf";
+const CONFIG_PATH = Deno.env.get("MNSCLOUD_AGENT_CONFIG") ??
+  "/etc/mnscloud/agent/agent.conf";
 
 function parseList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -199,6 +213,67 @@ async function loadConfig(): Promise<AgentConfig> {
       ),
     ),
     capabilities: capabilitiesFromConfig(parsed),
+    nginxEdgeConfigDir: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "config_dir",
+      "/etc/nginx/mnscloud/theme-domains",
+    ),
+    nginxEdgeAcmeRoot: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "acme_root",
+      "/var/www/certbot",
+    ),
+    nginxEdgeSslLiveDir: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "ssl_live_dir",
+      "/etc/letsencrypt/live",
+    ),
+    nginxEdgeSslArchiveDir: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "ssl_archive_dir",
+      "/etc/letsencrypt/archive",
+    ),
+    nginxEdgeSslRenewalDir: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "ssl_renewal_dir",
+      "/etc/letsencrypt/renewal",
+    ),
+    nginxEdgeAppUpstream: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "app_upstream",
+      "$app_upstream",
+    ),
+    nginxEdgeApiUpstream: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "api_upstream",
+      "$api_upstream",
+    ),
+    nginxEdgeTestCommand: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "test_command",
+      "nginx -t",
+    ),
+    nginxEdgeReloadCommand: getConfigValue(
+      parsed,
+      "nginx_edge",
+      "reload_command",
+      "systemctl reload nginx",
+    ),
+    certbotCommand: getConfigValue(
+      parsed,
+      "certbot",
+      "command",
+      "certbot",
+    ),
+    certbotDefaultEmail: getConfigValue(parsed, "certbot", "default_email", ""),
     asteriskCli: getConfigValue(parsed, "commands", "asterisk_cli", "asterisk"),
     freeswitchCli: getConfigValue(
       parsed,
@@ -902,6 +977,445 @@ async function executePabxCommandJob(
       "COMMAND_EXECUTION_FAILED",
       String(error),
       "pabx_command",
+    );
+  }
+}
+
+function payloadString(
+  payload: Record<string, unknown> | null | undefined,
+  key: string,
+  fallback = "",
+) {
+  const value = payload?.[key];
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function normalizeDomain(value: string) {
+  return value.trim().toLowerCase().replace(/\.$/, "");
+}
+
+function assertSafeDomain(domain: string) {
+  if (
+    !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
+      .test(domain)
+  ) {
+    throw new Error(`Invalid domain: ${domain || "empty"}`);
+  }
+}
+
+function nginxEdgeConfigPath(config: AgentConfig, domain: string) {
+  const filename = `${domain.replace(/[^a-z0-9._-]/g, "_")}.conf`;
+  return `${config.nginxEdgeConfigDir.replace(/\/+$/, "")}/${filename}`;
+}
+
+async function fileExists(path: string) {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
+}
+
+async function pathExists(path: string) {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeAtomic(path: string, content: string) {
+  await ensureParentDirectory(path);
+  const tmpPath = `${path}.tmp-${crypto.randomUUID()}`;
+  await Deno.writeTextFile(tmpPath, content);
+  await Deno.rename(tmpPath, path);
+}
+
+async function removePathIfExists(path: string, recursive = false) {
+  if (await pathExists(path)) await Deno.remove(path, { recursive });
+}
+
+async function runConfiguredShell(command: string, timeoutMs: number) {
+  const result = await runLocalCommand("sh", ["-lc", command], timeoutMs);
+  if (result.code !== 0) {
+    throw new Error(
+      result.stderr || result.stdout || `Command failed: ${command}`,
+    );
+  }
+  return result;
+}
+
+async function testNginxEdge(config: AgentConfig) {
+  return await runConfiguredShell(
+    config.nginxEdgeTestCommand,
+    config.commandTimeoutMs,
+  );
+}
+
+async function reloadNginxEdge(config: AgentConfig) {
+  return await runConfiguredShell(
+    config.nginxEdgeReloadCommand,
+    config.commandTimeoutMs,
+  );
+}
+
+async function nginxEdgeHasCertificate(config: AgentConfig, domain: string) {
+  const base = `${config.nginxEdgeSslLiveDir.replace(/\/+$/, "")}/${domain}`;
+  return await fileExists(`${base}/fullchain.pem`) &&
+    await fileExists(`${base}/privkey.pem`);
+}
+
+function renderNginxEdgeDomainConfig(
+  config: AgentConfig,
+  domain: string,
+  sslEnabled: boolean,
+) {
+  const acmeRoot = config.nginxEdgeAcmeRoot;
+  const appUpstream = config.nginxEdgeAppUpstream;
+  const apiUpstream = config.nginxEdgeApiUpstream;
+  const httpAppLocation = sslEnabled
+    ? "location / { return 301 https://$host$request_uri; }"
+    : `location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass ${appUpstream};
+  }`;
+
+  const httpBlock = `server {
+  listen 80;
+  server_name ${domain};
+
+  location = /healthz {
+    return 200 'ok';
+    add_header Content-Type text/plain;
+  }
+
+  location ^~ /.well-known/acme-challenge/ {
+    root ${acmeRoot};
+    default_type "text/plain";
+    try_files $uri =404;
+    access_log off;
+  }
+
+  location /api/ {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass ${apiUpstream};
+  }
+
+  ${httpAppLocation}
+}
+`;
+
+  if (!sslEnabled) return httpBlock;
+
+  const sslBase = `${config.nginxEdgeSslLiveDir.replace(/\/+$/, "")}/${domain}`;
+  const httpsBlock = `server {
+  listen 443 ssl;
+  http2 on;
+  server_name ${domain};
+
+  ssl_certificate ${sslBase}/fullchain.pem;
+  ssl_certificate_key ${sslBase}/privkey.pem;
+
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  ssl_session_cache shared:SSL:10m;
+  ssl_session_timeout 10m;
+  ssl_protocols TLSv1.2 TLSv1.3;
+
+  location = /healthz {
+    return 200 'ok';
+    add_header Content-Type text/plain;
+  }
+
+  location ^~ /.well-known/acme-challenge/ {
+    root ${acmeRoot};
+    default_type "text/plain";
+    try_files $uri =404;
+    access_log off;
+  }
+
+  location /api/ {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass ${apiUpstream};
+  }
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_pass ${appUpstream};
+  }
+}
+`;
+
+  return `${httpBlock}\n${httpsBlock}`;
+}
+
+async function activateNginxEdgeDomain(config: AgentConfig, domain: string) {
+  assertCapability(config, "nginx-edge.manage");
+  assertSafeDomain(domain);
+  await Deno.mkdir(config.nginxEdgeConfigDir, { recursive: true });
+  await Deno.mkdir(config.nginxEdgeAcmeRoot, { recursive: true });
+  const path = nginxEdgeConfigPath(config, domain);
+  const previous = await fileExists(path)
+    ? await Deno.readTextFile(path)
+    : null;
+  const sslEnabled = await nginxEdgeHasCertificate(config, domain);
+  await writeAtomic(
+    path,
+    renderNginxEdgeDomainConfig(config, domain, sslEnabled),
+  );
+  try {
+    await testNginxEdge(config);
+  } catch (error) {
+    if (previous === null) {
+      await Deno.remove(path).catch(() => undefined);
+    } else {
+      await writeAtomic(path, previous);
+    }
+    throw error;
+  }
+  await reloadNginxEdge(config);
+  return { domain, path, sslEnabled };
+}
+
+async function removeNginxEdgeDomain(config: AgentConfig, domain: string) {
+  assertCapability(config, "nginx-edge.manage");
+  assertSafeDomain(domain);
+  const path = nginxEdgeConfigPath(config, domain);
+  const previous = await fileExists(path)
+    ? await Deno.readTextFile(path)
+    : null;
+  if (previous !== null) await Deno.remove(path);
+  try {
+    await testNginxEdge(config);
+  } catch (error) {
+    if (previous !== null) await writeAtomic(path, previous);
+    throw error;
+  }
+  await reloadNginxEdge(config);
+  await removePathIfExists(
+    `${config.nginxEdgeSslLiveDir.replace(/\/+$/, "")}/${domain}`,
+    true,
+  );
+  await removePathIfExists(
+    `${config.nginxEdgeSslArchiveDir.replace(/\/+$/, "")}/${domain}`,
+    true,
+  );
+  await removePathIfExists(
+    `${config.nginxEdgeSslRenewalDir.replace(/\/+$/, "")}/${domain}.conf`,
+  );
+  return { domain, path, removed: previous !== null };
+}
+
+async function inspectNginxEdgeDomain(config: AgentConfig, domain: string) {
+  assertCapability(config, "nginx-edge.manage");
+  assertSafeDomain(domain);
+  const path = nginxEdgeConfigPath(config, domain);
+  return {
+    domain,
+    configPath: path,
+    configExists: await fileExists(path),
+    sslEnabled: await nginxEdgeHasCertificate(config, domain),
+  };
+}
+
+async function executeNginxEdgeJob(
+  job: LeaseJob,
+  config: AgentConfig,
+  agentUUID: string,
+  agentToken: string,
+) {
+  const command = String(
+    job.commandType ?? job.payload?.command ?? job.payload?.["command"] ?? "",
+  );
+  const domain = normalizeDomain(payloadString(job.payload, "domain"));
+  try {
+    let result: Record<string, unknown>;
+    if (command === "nginx.edge.domain.activate") {
+      result = await activateNginxEdgeDomain(config, domain);
+    } else if (command === "nginx.edge.domain.remove") {
+      result = await removeNginxEdgeDomain(config, domain);
+    } else if (command === "nginx.edge.domain.inspect") {
+      result = await inspectNginxEdgeDomain(config, domain);
+    } else if (command === "nginx.edge.config.test") {
+      const test = await testNginxEdge(config);
+      result = { command, exitCode: test.code, stdout: test.stdout };
+    } else if (command === "nginx.edge.reload") {
+      const reload = await reloadNginxEdge(config);
+      result = { command, exitCode: reload.code, stdout: reload.stdout };
+    } else {
+      await failJob(
+        config,
+        job.jobUUID,
+        agentUUID,
+        agentToken,
+        "NGINX_EDGE_COMMAND_NOT_IMPLEMENTED",
+        `${command || "unknown"} is not implemented by this agent version.`,
+        "nginx_edge",
+      );
+      return;
+    }
+    await jsonRequest(
+      config,
+      `/agent/jobs/${job.jobUUID}/complete`,
+      agentToken,
+      agentUUID,
+      { jobType: "nginx_edge", result },
+    );
+    log("info", "Nginx edge job completed.", { jobUUID: job.jobUUID, result });
+  } catch (error) {
+    await failJob(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      "NGINX_EDGE_COMMAND_FAILED",
+      error instanceof Error ? error.message : String(error),
+      "nginx_edge",
+    );
+  }
+}
+
+async function issueCertbotCertificate(
+  config: AgentConfig,
+  payload: Record<string, unknown>,
+) {
+  assertCapability(config, "certbot.manage");
+  const domain = normalizeDomain(payloadString(payload, "domain"));
+  assertSafeDomain(domain);
+  const email = payloadString(payload, "email", config.certbotDefaultEmail);
+  if (!email) throw new Error("Certificate email is required.");
+
+  await activateNginxEdgeDomain(config, domain);
+  const command = [
+    shellQuote(config.certbotCommand),
+    "certonly",
+    "--webroot",
+    "-w",
+    shellQuote(config.nginxEdgeAcmeRoot),
+    "-d",
+    shellQuote(domain),
+    "--email",
+    shellQuote(email),
+    "--agree-tos",
+    "--non-interactive",
+    "--keep-until-expiring",
+  ].join(" ");
+  const issue = await runConfiguredShell(
+    command,
+    Math.max(config.commandTimeoutMs, 180_000),
+  );
+  const activation = await activateNginxEdgeDomain(config, domain);
+  return { ...activation, email, stdout: issue.stdout };
+}
+
+async function renewCertbotCertificates(config: AgentConfig) {
+  assertCapability(config, "certbot.manage");
+  const deployHook =
+    `${config.nginxEdgeTestCommand} && ${config.nginxEdgeReloadCommand}`;
+  const command = [
+    shellQuote(config.certbotCommand),
+    "renew",
+    "--webroot",
+    "-w",
+    shellQuote(config.nginxEdgeAcmeRoot),
+    "--deploy-hook",
+    shellQuote(deployHook),
+  ].join(" ");
+  const result = await runConfiguredShell(
+    command,
+    Math.max(config.commandTimeoutMs, 180_000),
+  );
+  return { stdout: result.stdout, stderr: result.stderr };
+}
+
+async function inspectCertbotCertificate(
+  config: AgentConfig,
+  payload: Record<string, unknown>,
+) {
+  assertCapability(config, "certbot.manage");
+  const domain = normalizeDomain(payloadString(payload, "domain"));
+  assertSafeDomain(domain);
+  return {
+    domain,
+    sslEnabled: await nginxEdgeHasCertificate(config, domain),
+    livePath: `${config.nginxEdgeSslLiveDir.replace(/\/+$/, "")}/${domain}`,
+    renewalPath: `${
+      config.nginxEdgeSslRenewalDir.replace(/\/+$/, "")
+    }/${domain}.conf`,
+  };
+}
+
+async function executeCertbotJob(
+  job: LeaseJob,
+  config: AgentConfig,
+  agentUUID: string,
+  agentToken: string,
+) {
+  const command = String(
+    job.commandType ?? job.payload?.command ?? job.payload?.["command"] ?? "",
+  );
+  try {
+    let result: Record<string, unknown>;
+    if (command === "certbot.certificate.issue") {
+      result = await issueCertbotCertificate(config, job.payload ?? {});
+    } else if (command === "certbot.certificates.renew") {
+      result = await renewCertbotCertificates(config);
+    } else if (command === "certbot.certificate.inspect") {
+      result = await inspectCertbotCertificate(config, job.payload ?? {});
+    } else {
+      await failJob(
+        config,
+        job.jobUUID,
+        agentUUID,
+        agentToken,
+        "CERTBOT_COMMAND_NOT_IMPLEMENTED",
+        `${command || "unknown"} is not implemented by this agent version.`,
+        "certbot",
+      );
+      return;
+    }
+    await jsonRequest(
+      config,
+      `/agent/jobs/${job.jobUUID}/complete`,
+      agentToken,
+      agentUUID,
+      { jobType: "certbot", result },
+    );
+    log("info", "Certbot job completed.", { jobUUID: job.jobUUID, result });
+  } catch (error) {
+    await failJob(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      "CERTBOT_COMMAND_FAILED",
+      error instanceof Error ? error.message : String(error),
+      "certbot",
     );
   }
 }
@@ -1889,6 +2403,10 @@ async function pollJobs(
       await executePabxCommandJob(job, config, agentUUID, agentToken);
     } else if (job.jobType === "cyber_security") {
       await executeCyberSecurityJob(job, config, agentUUID, agentToken);
+    } else if (job.jobType === "nginx_edge") {
+      await executeNginxEdgeJob(job, config, agentUUID, agentToken);
+    } else if (job.jobType === "certbot") {
+      await executeCertbotJob(job, config, agentUUID, agentToken);
     } else {
       await uploadJob(job, config, agentUUID, agentToken);
     }

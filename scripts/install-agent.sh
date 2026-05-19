@@ -213,11 +213,28 @@ delete_after_upload = true
 roots = /var/lib/mnscloud/pabx/media-files
 mounts =
 
+[nginx_edge]
+config_dir = /etc/nginx/mnscloud/theme-domains
+acme_root = /var/www/certbot
+ssl_live_dir = /etc/letsencrypt/live
+ssl_archive_dir = /etc/letsencrypt/archive
+ssl_renewal_dir = /etc/letsencrypt/renewal
+app_upstream = \$app_upstream
+api_upstream = \$api_upstream
+test_command = nginx -t
+reload_command = systemctl reload nginx
+
+[certbot]
+command = certbot
+default_email =
+
 [capabilities]
 linux.status = true
 linux.package.install = true
 linux.service.manage = true
 linux.file.manage = true
+nginx-edge.manage = $(detect_capability nginx)
+certbot.manage = $(detect_capability certbot)
 security.nftables.manage = true
 security.crowdsec.manage = true
 security.logs.read = true
@@ -285,7 +302,7 @@ main() {
   agent_name="${AGENT_NAME:-$(prompt_value "Agent name" "${existing_agent_name:-$hostname}")}"
 
   info "Preparing native mnscloud-agent..."
-  run "mkdir -p '${install_dir}' '${config_dir}' '${data_dir}' '${logs_dir}' /var/lib/mnscloud/pabx/media-files"
+  run "mkdir -p '${install_dir}' '${config_dir}' '${data_dir}' '${logs_dir}' /var/lib/mnscloud/pabx/media-files /etc/nginx/mnscloud/theme-domains /var/www/certbot"
   run "cp '${AGENT_SOURCE_DIR}/main.ts' '${install_dir}/main.ts'"
   run "cp '${AGENT_SOURCE_DIR}/deno.jsonc' '${install_dir}/deno.jsonc'"
 

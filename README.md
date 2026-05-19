@@ -69,6 +69,8 @@ operator intentionally requests it.
 - There is one Agent runtime; limits are enforced through OS permissions,
   capabilities, assignments, and jobs.
 - Capabilities are declared by the host and synchronized on heartbeat.
+- Nginx edge and Certbot can be enabled on the public edge host through
+  `nginx-edge.manage` and `certbot.manage` capabilities.
 - Permanent storage credentials stay only in the API.
 - Jobs use temporary authorization, such as signed URLs.
 - Local files can only be read or written inside configured roots.
