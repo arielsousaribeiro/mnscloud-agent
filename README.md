@@ -138,6 +138,8 @@ operator intentionally requests it.
 - Capabilities are declared by the host and synchronized on heartbeat.
 - Nginx edge and Certbot can be enabled on the public edge host through
   `nginx-edge.manage` and `certbot.manage` capabilities.
+- Theme domain web and certificate actions are delivered to the edge host as
+  Agent Runtime jobs, not generic worker containers.
 - Windows cyber security uses Windows-specific capabilities and jobs. It does
   not receive Linux-only nftables/systemd jobs.
 - Permanent storage credentials stay only in the API.

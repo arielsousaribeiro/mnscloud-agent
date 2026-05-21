@@ -293,6 +293,11 @@ The edge host keeps certificate private keys local under `/etc/letsencrypt`.
 Nginx reads certificates directly from local files; certificates are not copied
 through the API or shared with other modules.
 
+Theme domain provisioning uses this Agent path as the primary production model:
+the API creates `NginxEdgeAgentJob` and `CertbotAgentJob` records, the edge
+agent leases them with outbound API polling, performs the local Nginx/Certbot
+operation, and reports completion back to the API.
+
 Implemented Nginx edge commands:
 
 - `nginx.edge.domain.activate`: writes or refreshes the domain Nginx config.

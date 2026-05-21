@@ -113,7 +113,7 @@ function parseIni(text: string): IniConfig {
 
 function capabilitiesFromConfig(config: IniConfig) {
   const capabilities: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(config.capabilities ?? {})) {
+  for (const key of Object.keys(config.capabilities ?? {})) {
     capabilities[key] = getBoolean(config, "capabilities", key, false);
   }
   return capabilities;
@@ -1127,6 +1127,11 @@ function renderNginxEdgeDomainConfig(
   const acmeRoot = config.nginxEdgeAcmeRoot;
   const appUpstream = config.nginxEdgeAppUpstream;
   const apiUpstream = config.nginxEdgeApiUpstream;
+  const envJsBlock = `location = /env.js {
+    default_type application/javascript;
+    add_header Cache-Control "no-store";
+    alias /etc/nginx/mnscloud/runtime/env.js;
+  }`;
   const httpAppLocation = sslEnabled
     ? "location / { return 301 https://$host$request_uri; }"
     : `location / {
@@ -1144,6 +1149,10 @@ function renderNginxEdgeDomainConfig(
   listen 80;
   server_name ${domain};
 
+  if ($request_uri ~ "^//") {
+    return 404;
+  }
+
   location = /healthz {
     return 200 'ok';
     add_header Content-Type text/plain;
@@ -1155,6 +1164,12 @@ function renderNginxEdgeDomainConfig(
     try_files $uri =404;
     access_log off;
   }
+
+  location ~* ^/https?://[^/]+/favicon\\.ico$ {
+    return 301 /favicon.ico;
+  }
+
+  ${envJsBlock}
 
   location /api/ {
     proxy_http_version 1.1;
@@ -1179,6 +1194,10 @@ function renderNginxEdgeDomainConfig(
   http2 on;
   server_name ${domain};
 
+  if ($request_uri ~ "^//") {
+    return 404;
+  }
+
   ssl_certificate ${sslBase}/fullchain.pem;
   ssl_certificate_key ${sslBase}/privkey.pem;
 
@@ -1198,6 +1217,12 @@ function renderNginxEdgeDomainConfig(
     try_files $uri =404;
     access_log off;
   }
+
+  location ~* ^/https?://[^/]+/favicon\\.ico$ {
+    return 301 /favicon.ico;
+  }
+
+  ${envJsBlock}
 
   location /api/ {
     proxy_http_version 1.1;
@@ -1649,7 +1674,7 @@ async function commandOk(command: string, timeoutMs = 5000) {
   return result.code === 0;
 }
 
-async function stepResult(label: string, stdout: string) {
+function stepResult(label: string, stdout: string) {
   return { label, code: 0, stdout, stderr: "" };
 }
 
