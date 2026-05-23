@@ -12,13 +12,41 @@ capabilities, and API assignments.
 
 1. The installer creates the local `agent.conf`.
 2. The installer creates or reuses the local `agent.uuid`.
-3. The operator registers the UUID in MNSCloud.
-4. MNSCloud generates the token and the operator writes the local `agent.token`.
+3. The installer can consume a short-lived MNSCloud enrollment token.
+4. The API validates the enrollment, creates or activates the Agent identity,
+   and returns the runtime token directly to the installer.
 5. The Agent sends heartbeat requests to `POST /api/v1/agent/heartbeat`.
 6. Heartbeat synchronizes host-declared capabilities.
 7. The API returns jobs through `POST /api/v1/agent/jobs/lease` according to
    capabilities and assignments.
 8. The Agent runs the job locally and reports success or failure.
+
+## Secure Enrollment
+
+The preferred activation flow is enrollment-based. The MNSCloud API creates a
+single-use enrollment token with a short TTL. The app may display an install
+command containing that temporary enrollment token, but it never receives the
+long-lived Agent runtime token.
+
+The installer consumes the enrollment through:
+
+```text
+POST /api/v1/agent/enroll
+```
+
+If the enrollment is valid, the API returns the runtime token only to the
+server-side installer. The installer writes it to
+`/var/lib/mnscloud/agent/agent.token` and starts the service. Enrollment
+creation and consumption are recorded as tenant and global activity logs by the
+API.
+
+Example:
+
+```bash
+sudo bash scripts/install-agent.sh \
+  --api-base https://api.example.com \
+  --enrollment-token '<short-lived-enrollment-token>'
+```
 
 ## Configuration
 

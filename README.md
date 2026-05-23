@@ -61,16 +61,19 @@ cd /opt/mnscloud/mnscloud-agent
 ## Linux Installation
 
 ```bash
-sudo bash scripts/install-agent.sh
+sudo bash scripts/install-agent.sh \
+  --api-base "https://api.example.com" \
+  --enrollment-token "<short-lived-enrollment-token>"
 ```
 
 The installer prepares Deno, creates or reuses
 `/var/lib/mnscloud/agent/agent.uuid`, writes `agent.conf`, installs the systemd
 unit, and starts `mnscloud-agent`.
 
-After installation, register the UUID in MNSCloud and generate an Agent token.
-The token is stored in `/var/lib/mnscloud/agent/agent.token`; restart the
-service after writing it.
+The preferred flow is enrollment-based: MNSCloud creates a short-lived
+enrollment token, the installer consumes it, and the API returns the long-lived
+Agent runtime token directly to the server. The browser never receives the
+runtime token. The token is stored in `/var/lib/mnscloud/agent/agent.token`.
 
 ## Windows Installation
 

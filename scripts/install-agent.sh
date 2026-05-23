@@ -14,7 +14,7 @@ LOG_FILE="${LOG_FILE:-/var/log/mnscloud-agent-install.log}"
 usage() {
   cat <<'TXT'
 Usage:
-  agent/scripts/install-agent.sh [--dry-run] [--api-base URL] [--name NAME]
+  agent/scripts/install-agent.sh [--dry-run] [--api-base URL] [--name NAME] [--enrollment-token TOKEN]
 
 Installs the single native MNSCloud Agent as a systemd service.
 TXT
@@ -22,6 +22,7 @@ TXT
 
 API_BASE=""
 AGENT_NAME=""
+ENROLLMENT_TOKEN="${MNSCLOUD_AGENT_ENROLLMENT_TOKEN:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -34,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --name)
       AGENT_NAME="${2:-}"
+      shift 2
+      ;;
+    --enrollment-token)
+      ENROLLMENT_TOKEN="${2:-}"
       shift 2
       ;;
     --help|-h)
@@ -306,6 +311,53 @@ WantedBy=multi-user.target
 "
 }
 
+activate_enrollment() {
+  local api_base="$1" agent_uuid="$2" agent_name="$3" hostname="$4" token_file="$5"
+  [[ -n "${ENROLLMENT_TOKEN}" ]] || return 0
+  if $DRY_RUN; then
+    log DRY-RUN "consume agent enrollment token at ${api_base}/api/v1/agent/enroll"
+    return 0
+  fi
+
+  local payload_file response_file agent_token
+  payload_file="$(mktemp)"
+  response_file="$(mktemp)"
+  TOKEN="${ENROLLMENT_TOKEN}" AGENT_UUID="${agent_uuid}" AGENT_NAME="${agent_name}" AGENT_HOSTNAME="${hostname}" \
+    deno eval --allow-env '
+      const payload = {
+        enrollmentToken: Deno.env.get("TOKEN"),
+        agentUUID: Deno.env.get("AGENT_UUID"),
+        name: Deno.env.get("AGENT_NAME"),
+        hostname: Deno.env.get("AGENT_HOSTNAME"),
+      };
+      console.log(JSON.stringify(payload));
+    ' > "${payload_file}"
+
+  info "Consuming MNSCloud Agent enrollment token."
+  local http_code
+  http_code="$(curl -sS -o "${response_file}" -w "%{http_code}" \
+    -X POST "${api_base}/api/v1/agent/enroll" \
+    -H "Content-Type: application/json" \
+    --data-binary "@${payload_file}")"
+  rm -f "${payload_file}"
+  if [[ "${http_code}" != "201" && "${http_code}" != "200" ]]; then
+    warn "Agent enrollment failed with HTTP ${http_code}: $(tr '\n' ' ' < "${response_file}" | head -c 300)"
+    rm -f "${response_file}"
+    fail "Could not activate the Agent enrollment token."
+  fi
+
+  agent_token="$(deno eval --allow-read '
+    const payload = JSON.parse(await Deno.readTextFile(Deno.args[0]));
+    console.log(payload?.data?.agentToken ?? "");
+  ' "${response_file}")"
+  rm -f "${response_file}"
+  [[ -n "${agent_token}" ]] || fail "Enrollment response did not include an Agent runtime token."
+
+  write_file "${token_file}" "${agent_token}"
+  run "chmod 0600 '${token_file}'"
+  ok "Agent enrollment consumed and local token saved."
+}
+
 main() {
   local api_base agent_uuid agent_name hostname existing_api_base existing_agent_name
   local install_dir="/opt/mnscloud/agent"
@@ -339,6 +391,7 @@ main() {
 
   write_agent_config "$config_file" "$agent_name" "$hostname" "$api_base"
   write_service_file "$service_file" "$install_dir" "$config_file"
+  activate_enrollment "$api_base" "$agent_uuid" "$agent_name" "$hostname" "${data_dir}/agent.token"
 
   run "chmod 0755 '${install_dir}' '${config_dir}'"
   run "chmod 0700 '${data_dir}' '${logs_dir}'"
