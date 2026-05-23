@@ -44,9 +44,19 @@ Example:
 
 ```bash
 sudo bash scripts/install-agent.sh \
-  --api-base https://api.example.com \
+  --api-base https://dev.publichost.cloud \
   --enrollment-token '<short-lived-enrollment-token>'
 ```
+
+Operational flow:
+
+1. Generate the enrollment in `Monitoring > Agents` in the MNSCloud App.
+2. Copy the generated install command.
+3. Run that command on the target server.
+4. Confirm the Agent appears online in the App.
+
+Do not register the local UUID manually for new installs. The installer sends the UUID while
+consuming the enrollment, and the API links the Agent automatically.
 
 ## Configuration
 
