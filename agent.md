@@ -311,7 +311,8 @@ Implemented Nginx edge commands:
 Implemented Certbot commands:
 
 - `certbot.certificate.issue`: creates the HTTP challenge config, issues a
-  certificate with webroot validation, then refreshes the HTTPS config.
+  certificate with webroot validation using the job payload `email`, then
+  refreshes the HTTPS config.
 - `certbot.certificates.renew`: renews existing certificates and reloads Nginx
   through the configured deploy hook.
 - `certbot.certificate.inspect`: reports local certificate paths for a domain.
