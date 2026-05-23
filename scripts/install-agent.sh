@@ -323,7 +323,7 @@ activate_enrollment() {
   payload_file="$(mktemp)"
   response_file="$(mktemp)"
   TOKEN="${ENROLLMENT_TOKEN}" AGENT_UUID="${agent_uuid}" AGENT_NAME="${agent_name}" AGENT_HOSTNAME="${hostname}" \
-    deno eval '
+    deno run --allow-env=TOKEN,AGENT_UUID,AGENT_NAME,AGENT_HOSTNAME - <<'DENO' > "${payload_file}"
       const payload = {
         enrollmentToken: Deno.env.get("TOKEN"),
         agentUUID: Deno.env.get("AGENT_UUID"),
@@ -331,7 +331,7 @@ activate_enrollment() {
         hostname: Deno.env.get("AGENT_HOSTNAME"),
       };
       console.log(JSON.stringify(payload));
-    ' > "${payload_file}"
+DENO
 
   info "Consuming MNSCloud Agent enrollment token."
   local http_code
@@ -346,10 +346,11 @@ activate_enrollment() {
     fail "Could not activate the Agent enrollment token."
   fi
 
-  agent_token="$(deno eval '
+  agent_token="$(deno run --allow-read="${response_file}" - "${response_file}" <<'DENO'
     const payload = JSON.parse(await Deno.readTextFile(Deno.args[0]));
     console.log(payload?.data?.agentToken ?? "");
-  ' "${response_file}")"
+DENO
+)"
   rm -f "${response_file}"
   [[ -n "${agent_token}" ]] || fail "Enrollment response did not include an Agent runtime token."
 
