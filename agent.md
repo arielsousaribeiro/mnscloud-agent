@@ -40,11 +40,11 @@ server-side installer. The installer writes it to
 creation and consumption are recorded as tenant and global activity logs by the
 API.
 
-Example:
+The generated command will look similar to this, but do not copy this example literally:
 
 ```bash
 sudo bash scripts/install-agent.sh \
-  --api-base https://dev.publichost.cloud \
+  --api-base https://api.example.com \
   --enrollment-token '<short-lived-enrollment-token>'
 ```
 
@@ -54,6 +54,10 @@ Operational flow:
 2. Copy the generated install command.
 3. Run that command on the target server.
 4. Confirm the Agent appears online in the App.
+
+The MNSCloud App builds `--api-base` from the current browser origin. In production this should be
+the same public origin that serves `/api/v1`. In local development, do not use a `localhost` command
+on a remote server unless that server can actually reach that address.
 
 Do not register the local UUID manually for new installs. The installer sends the UUID while
 consuming the enrollment, and the API links the Agent automatically.
