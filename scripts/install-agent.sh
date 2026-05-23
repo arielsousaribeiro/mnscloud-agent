@@ -402,7 +402,7 @@ main() {
 
   ok "mnscloud-agent installed as native systemd service."
   info "Agent UUID: ${agent_uuid}"
-  info "Register this UUID in MNSCloud, then paste the generated token into ${data_dir}/agent.token."
+  info "Agent enrolled and runtime token stored at ${data_dir}/agent.token."
 }
 
 main "$@"

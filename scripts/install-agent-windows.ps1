@@ -1,5 +1,6 @@
 param(
   [string]$ApiBase = $env:MNSCLOUD_API_BASE,
+  [string]$EnrollmentToken = $env:MNSCLOUD_AGENT_ENROLLMENT_TOKEN,
   [string]$Name = $env:AGENT_NAME,
   [switch]$DryRun
 )
@@ -89,6 +90,39 @@ timeout_ms = 15000
   Invoke-Step { Set-Content -Path $ConfigFile -Value $content -Encoding UTF8 }
 }
 
+function Enroll-Agent {
+  if (-not $EnrollmentToken) {
+    if (Test-Path $TokenFile) {
+      Write-Step "Existing agent token found at $TokenFile"
+      return
+    }
+    throw "Provide -EnrollmentToken or MNSCLOUD_AGENT_ENROLLMENT_TOKEN to enroll this agent."
+  }
+
+  $uuid = (Get-Content $UuidFile -Raw).Trim()
+  $endpoint = "$DefaultApiBase/api/v1/agent/enroll"
+  $payload = @{
+    enrollmentToken = $EnrollmentToken
+    agentUUID = $uuid
+    name = $AgentName
+    hostname = $env:COMPUTERNAME
+  } | ConvertTo-Json -Depth 5
+
+  Write-Step "Enrolling agent through $endpoint"
+  if ($DryRun) {
+    Write-Step "DRY-RUN: enrollment request skipped"
+    return
+  }
+
+  $response = Invoke-RestMethod -Method Post -Uri $endpoint -ContentType "application/json" -Body $payload
+  $runtimeToken = $response.data.agentToken
+  if (-not $runtimeToken) {
+    throw "Enrollment response did not include an agent runtime token."
+  }
+
+  Set-Content -Path $TokenFile -Value $runtimeToken -Encoding ASCII -NoNewline
+}
+
 function Install-Service([string]$DenoPath) {
   $runContent = @"
 `$env:MNSCLOUD_AGENT_CONFIG = "$ConfigFile"
@@ -135,9 +169,10 @@ if (!(Test-Path $UuidFile)) {
 }
 
 Write-AgentConfig -DenoPath $DenoPath
+Enroll-Agent
 Install-Service -DenoPath $DenoPath
 
 $uuid = if (Test-Path $UuidFile) { (Get-Content $UuidFile -Raw).Trim() } else { "<dry-run>" }
 Write-Step "mnscloud-agent installed as Windows service."
 Write-Step "Agent UUID: $uuid"
-Write-Step "Register this UUID in MNSCloud, then paste the generated token into $TokenFile and restart $ServiceName."
+Write-Step "Agent enrolled and service started."
