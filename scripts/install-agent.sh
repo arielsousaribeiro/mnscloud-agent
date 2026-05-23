@@ -323,7 +323,7 @@ activate_enrollment() {
   payload_file="$(mktemp)"
   response_file="$(mktemp)"
   TOKEN="${ENROLLMENT_TOKEN}" AGENT_UUID="${agent_uuid}" AGENT_NAME="${agent_name}" AGENT_HOSTNAME="${hostname}" \
-    deno eval --allow-env '
+    deno eval '
       const payload = {
         enrollmentToken: Deno.env.get("TOKEN"),
         agentUUID: Deno.env.get("AGENT_UUID"),
@@ -346,7 +346,7 @@ activate_enrollment() {
     fail "Could not activate the Agent enrollment token."
   fi
 
-  agent_token="$(deno eval --allow-read '
+  agent_token="$(deno eval '
     const payload = JSON.parse(await Deno.readTextFile(Deno.args[0]));
     console.log(payload?.data?.agentToken ?? "");
   ' "${response_file}")"
