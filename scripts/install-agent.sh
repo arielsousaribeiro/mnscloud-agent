@@ -404,6 +404,77 @@ validate_existing_identity() {
   ok "Existing Agent identity validated by MNSCloud API."
 }
 
+capabilities_json_from_config() {
+  local config_file="$1"
+  deno run --allow-read="${config_file}" - "${config_file}" <<'DENO'
+const configPath = Deno.args[0];
+const text = await Deno.readTextFile(configPath);
+let section = "";
+const capabilities = [];
+for (const rawLine of text.split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+  const sectionMatch = line.match(/^\[([a-zA-Z0-9_.-]+)\]$/);
+  if (sectionMatch) {
+    section = sectionMatch[1];
+    continue;
+  }
+  if (section !== "capabilities") continue;
+  const separator = line.indexOf("=");
+  if (separator < 0) continue;
+  const key = line.slice(0, separator).trim();
+  const value = line.slice(separator + 1).trim().toLowerCase();
+  if (key && ["1", "true", "yes", "y", "on"].includes(value)) {
+    capabilities.push(key);
+  }
+}
+console.log(JSON.stringify(capabilities.length ? capabilities : ["linux.status"]));
+DENO
+}
+
+sync_installed_capabilities() {
+  local api_base="$1" uuid_file="$2" token_file="$3" config_file="$4" hostname="$5"
+  $DRY_RUN && { log DRY-RUN "sync installed Agent capabilities at ${api_base}/api/v1/agent/heartbeat"; return 0; }
+
+  [[ -s "${uuid_file}" && -s "${token_file}" ]] || fail "Agent UUID/token not found after install."
+
+  local agent_uuid agent_token capabilities_json payload_file response_file http_code
+  agent_uuid="$(tr -d '[:space:]' < "${uuid_file}")"
+  agent_token="$(tr -d '[:space:]' < "${token_file}")"
+  capabilities_json="$(capabilities_json_from_config "${config_file}")"
+  payload_file="$(mktemp)"
+  response_file="$(mktemp)"
+
+  HOSTNAME_VALUE="${hostname}" CAPABILITIES_JSON="${capabilities_json}" deno run \
+    --allow-env=HOSTNAME_VALUE,CAPABILITIES_JSON - <<'DENO' > "${payload_file}"
+const capabilities = JSON.parse(Deno.env.get("CAPABILITIES_JSON") ?? "[]");
+console.log(JSON.stringify({
+  hostname: Deno.env.get("HOSTNAME_VALUE") ?? "",
+  version: "1.0.0",
+  installerValidation: true,
+  capabilities,
+}));
+DENO
+
+  info "Syncing installed Agent capabilities with MNSCloud API."
+  http_code="$(curl -sS -o "${response_file}" -w "%{http_code}" \
+    -X POST "${api_base}/api/v1/agent/heartbeat" \
+    -H "Content-Type: application/json" \
+    -H "X-MNSCloud-Agent-UUID: ${agent_uuid}" \
+    -H "Authorization: Bearer ${agent_token}" \
+    --data-binary "@${payload_file}")"
+  rm -f "${payload_file}"
+
+  if [[ "${http_code}" != "200" ]]; then
+    warn "Agent capability sync failed with HTTP ${http_code}: $(tr '\n' ' ' < "${response_file}" | head -c 300)"
+    rm -f "${response_file}"
+    fail "Could not sync installed Agent capabilities with MNSCloud."
+  fi
+
+  rm -f "${response_file}"
+  ok "Installed Agent capabilities synced with MNSCloud API."
+}
+
 main() {
   local api_base agent_uuid install_label hostname existing_api_base existing_install_label
   local install_dir="/opt/mnscloud/agent"
@@ -449,6 +520,7 @@ main() {
   run "chmod 0644 '${service_file}'"
   run "systemctl daemon-reload"
   run "systemctl enable --now mnscloud-agent"
+  sync_installed_capabilities "$api_base" "${data_dir}/agent.uuid" "${data_dir}/agent.token" "$config_file" "$hostname"
 
   ok "mnscloud-agent installed as native systemd service."
   info "Agent UUID: ${agent_uuid}"
