@@ -89,6 +89,7 @@ version = $(Get-AgentVersion)
 update_channel = stable
 poll_interval_ms = 15000
 heartbeat_interval_ms = 60000
+cyber_security_sync_interval_ms = 60000
 
 [identity]
 agent_uuid_file = $UuidFile

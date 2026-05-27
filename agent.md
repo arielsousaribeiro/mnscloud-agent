@@ -117,8 +117,8 @@ inspect scripts after cleanup. Passing `--remove-repository` also removes
 `/opt/mnscloud/mnscloud-agent`.
 
 The Windows uninstaller removes the `MNSCloudAgent` service,
-`C:\Program Files\MNSCloud\Agent`, and
-`C:\ProgramData\MNSCloud\Agent`, including the local UUID and runtime token.
+`C:\Program Files\MNSCloud\Agent`, and `C:\ProgramData\MNSCloud\Agent`,
+including the local UUID and runtime token.
 
 Local uninstall does not delete the Agent record in the MNSCloud API. Operators
 must delete or deactivate that record in the App when the identity should no
@@ -149,6 +149,7 @@ version = 0.1.0
 update_channel = stable
 poll_interval_ms = 15000
 heartbeat_interval_ms = 60000
+cyber_security_sync_interval_ms = 60000
 
 [identity]
 agent_uuid_file = /var/lib/mnscloud/agent/agent.uuid

@@ -9,6 +9,7 @@ type AgentConfig = {
   updateChannel: string;
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
+  cyberSecuritySyncIntervalMs: number;
   agentUUIDFile: string;
   agentTokenFile: string;
   recordingsRoots: string[];
@@ -199,6 +200,12 @@ async function loadConfig(): Promise<AgentConfig> {
       parsed,
       "agent",
       "heartbeat_interval_ms",
+      60_000,
+    ),
+    cyberSecuritySyncIntervalMs: getNumber(
+      parsed,
+      "agent",
+      "cyber_security_sync_interval_ms",
       60_000,
     ),
     agentUUIDFile: getConfigValue(
@@ -641,6 +648,7 @@ async function heartbeat(
   config: AgentConfig,
   agentUUID: string,
   agentToken: string,
+  cyberSecurityStatus?: Record<string, unknown> | null,
 ) {
   const pabxRegistrations = await collectPabxRegistrations(config);
   await jsonRequest(config, "/agent/heartbeat", agentToken, agentUUID, {
@@ -658,6 +666,7 @@ async function heartbeat(
     mediaMounts: config.mediaMounts,
     capabilities: config.capabilities,
     pabxRegistrations,
+    cyberSecurityStatus: cyberSecurityStatus ?? undefined,
   });
 }
 
@@ -3280,6 +3289,7 @@ async function main() {
   });
 
   let lastHeartbeat = 0;
+  let lastCyberSecuritySync = 0;
   while (true) {
     try {
       const agentToken = await optionalRead(config.agentTokenFile);
@@ -3296,7 +3306,14 @@ async function main() {
 
       const now = Date.now();
       if (now - lastHeartbeat >= config.heartbeatIntervalMs) {
-        await heartbeat(config, agentUUID, agentToken);
+        let cyberSecurityStatus: Record<string, unknown> | null = null;
+        if (
+          now - lastCyberSecuritySync >= config.cyberSecuritySyncIntervalMs
+        ) {
+          cyberSecurityStatus = await collectCyberSecurityStatus(config);
+          lastCyberSecuritySync = now;
+        }
+        await heartbeat(config, agentUUID, agentToken, cyberSecurityStatus);
         lastHeartbeat = now;
       }
       await pollJobs(config, agentUUID, agentToken);
