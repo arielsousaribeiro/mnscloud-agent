@@ -1848,13 +1848,44 @@ function crowdSecCollectionInstallCommand(collection: string) {
   return [
     "set -eu",
     "command -v jq >/dev/null 2>&1",
+    "cscli hub update",
     `cscli collections install ${quotedCollection} --force`,
     `inspect="$(cscli collections inspect ${quotedCollection} -o json)"`,
-    `printf '%s\\n' "$inspect" | jq -r '.parsers[]?' | while IFS= read -r item; do if [ -n "$item" ]; then cscli parsers inspect "$item" -o json | jq -e '.installed == true and (.tainted | not)' >/dev/null 2>&1 || cscli parsers install "$item" --force; fi; done`,
-    `printf '%s\\n' "$inspect" | jq -r '.scenarios[]?' | while IFS= read -r item; do if [ -n "$item" ]; then cscli scenarios inspect "$item" -o json | jq -e '.installed == true and (.tainted | not)' >/dev/null 2>&1 || cscli scenarios install "$item" --force; fi; done`,
+    'for spec in \'collections:collections\' \'parsers:parsers\' \'scenarios:scenarios\' \'postoverflows:postoverflows\'; do field="${spec%%:*}"; command="${spec##*:}"; printf \'%s\\n\' "$inspect" | jq -r --arg field "$field" \'.[$field][]?\' | while IFS= read -r item; do if [ -n "$item" ]; then cscli "$command" inspect "$item" -o json | jq -e \'.installed == true and (.tainted | not)\' >/dev/null 2>&1 || cscli "$command" install "$item" --force; fi; done; done',
     `cscli collections install ${quotedCollection} --force`,
     `cscli collections inspect ${quotedCollection} -o json | jq -e '.installed == true and (.tainted | not)' >/dev/null`,
   ].join("\n");
+}
+
+function crowdSecCollectionInstallPowerShellCommand(collection: string) {
+  const quotedCollection = powerShellQuote(collection);
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$types = @(",
+    "  @{ Field = 'collections'; Command = 'collections' },",
+    "  @{ Field = 'parsers'; Command = 'parsers' },",
+    "  @{ Field = 'scenarios'; Command = 'scenarios' },",
+    "  @{ Field = 'postoverflows'; Command = 'postoverflows' }",
+    ")",
+    "cscli hub update",
+    `cscli collections install ${quotedCollection} --force`,
+    `$inspect = cscli collections inspect ${quotedCollection} -o json | ConvertFrom-Json`,
+    "foreach ($type in $types) {",
+    "  $items = @($inspect.($type.Field))",
+    "  foreach ($item in $items) {",
+    "    if (-not $item) { continue }",
+    "    try {",
+    "      $itemInspect = & cscli $($type.Command) inspect $item -o json | ConvertFrom-Json",
+    "      if (-not $itemInspect.installed -or $itemInspect.tainted) { & cscli $($type.Command) install $item --force }",
+    "    } catch {",
+    "      & cscli $($type.Command) install $item --force",
+    "    }",
+    "  }",
+    "}",
+    `cscli collections install ${quotedCollection} --force`,
+    `$final = cscli collections inspect ${quotedCollection} -o json | ConvertFrom-Json`,
+    "if (-not $final.installed -or $final.tainted) { throw 'CrowdSec collection is not installed cleanly.' }",
+  ].join("; ");
 }
 
 type LinuxPackageFamily = "debian" | "rhel" | "unsupported";
@@ -2582,10 +2613,10 @@ async function installWindowsCyberSecurityStack(
       await runStep(
         75,
         `Install CrowdSec collection ${collection}`,
-        `if (Get-Command cscli -ErrorAction SilentlyContinue) { cscli collections install ${
-          powerShellQuote(collection)
-        }; cscli hub update } else { Write-Output 'cscli not found; collection install skipped.' }`,
-        true,
+        `if (Get-Command cscli -ErrorAction SilentlyContinue) { ${
+          crowdSecCollectionInstallPowerShellCommand(collection)
+        } } else { throw 'cscli not found; collection install skipped.' }`,
+        false,
         90_000,
       ),
     );
@@ -2828,11 +2859,9 @@ async function applyWindowsCyberSecurityProfile(
     steps.push(
       await runPowerShellInstallStep(
         `Install CrowdSec collection ${collection}`,
-        `cscli collections install ${
-          powerShellQuote(collection)
-        }; cscli hub update`,
+        crowdSecCollectionInstallPowerShellCommand(collection),
         Math.min(timeoutMs, 90_000),
-        true,
+        false,
       ),
     );
     percent += Math.max(5, Math.floor(45 / Math.max(collections.length, 1)));
