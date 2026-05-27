@@ -1846,8 +1846,8 @@ async function writeCrowdSecProfileAcquisition(services: unknown[]) {
 function crowdSecCollectionInstallCommand(collection: string) {
   const quotedCollection = shellQuote(collection);
   const verifyCollection =
-    `cscli collections list ${quotedCollection} | grep -F ${quotedCollection} | grep -Eqi 'enabled|tainted'`;
-  return `cscli collections install ${quotedCollection} && ${verifyCollection}`;
+    `cscli collections list | grep -F ${quotedCollection} | grep -Eqi 'enabled|tainted'`;
+  return `${verifyCollection} || (cscli collections install ${quotedCollection} && ${verifyCollection})`;
 }
 
 type LinuxPackageFamily = "debian" | "rhel" | "unsupported";
@@ -2035,13 +2035,22 @@ async function packageAvailable(
   return result.code === 0 && result.stdout && result.stdout !== "(none)";
 }
 
+async function officialCrowdSecRepositoryConfigured(
+  family: LinuxPackageFamily,
+) {
+  const command = family === "rhel"
+    ? "find /etc/yum.repos.d -maxdepth 1 -type f -name '*.repo' -print0 2>/dev/null | xargs -0 grep -Eiq 'packagecloud.io/.*/crowdsec|crowdsec/crowdsec|install.crowdsec.net'"
+    : "find /etc/apt/sources.list /etc/apt/sources.list.d -maxdepth 1 -type f -print0 2>/dev/null | xargs -0 grep -Eiq 'packagecloud.io/.*/crowdsec|crowdsec/crowdsec|install.crowdsec.net'";
+  return await commandOk(command, 10_000);
+}
+
 async function ensureCrowdSecRepository(
   family: LinuxPackageFamily,
   timeoutMs: number,
 ) {
-  if (await packageAvailable("crowdsec", family)) {
+  if (await officialCrowdSecRepositoryConfigured(family)) {
     return {
-      label: "CrowdSec repository already available",
+      label: "Official CrowdSec repository already configured",
       code: 0,
       stdout: "",
       stderr: "",
@@ -2304,11 +2313,7 @@ async function installCyberSecurityStack(
     await runStep(
       42,
       "Refresh CrowdSec package metadata",
-      `if ${
-        packagesInstalledForFamilyCommand(["crowdsec"], packageFamily)
-      }; then ${
-        metadataRefreshCommand(packageFamily)
-      }; else echo 'CrowdSec package metadata refresh skipped; CrowdSec is already installed.'; fi`,
+      metadataRefreshCommand(packageFamily),
       true,
       75_000,
     ),
@@ -2335,11 +2340,7 @@ async function installCyberSecurityStack(
     await runStep(
       55,
       "Install CrowdSec and firewall bouncer",
-      `if ${
-        packagesInstalledForFamilyCommand(securityPackages, packageFamily)
-      }; then ${
-        packageInstallCommand(securityPackages, packageFamily)
-      }; else echo 'CrowdSec and firewall bouncer already installed.'; fi`,
+      packageInstallCommand(securityPackages, packageFamily),
       false,
       120_000,
     ),
