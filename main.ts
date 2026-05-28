@@ -2008,11 +2008,27 @@ function packageInstallCommand(
   return `DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${quotedPackages}`;
 }
 
-function parseJsonArray(text: string) {
+function parseJsonList(text: string): Array<Record<string, unknown>> {
   if (!text.trim()) return [];
   try {
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
+    const candidates = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object"
+      ? [
+        (parsed as Record<string, unknown>).alerts,
+        (parsed as Record<string, unknown>).decisions,
+        (parsed as Record<string, unknown>).items,
+        (parsed as Record<string, unknown>).data,
+        (parsed as Record<string, unknown>).result,
+        (parsed as Record<string, unknown>).rows,
+      ].find(Array.isArray)
+      : [];
+    return (Array.isArray(candidates) ? candidates : []).filter((
+      item,
+    ): item is Record<string, unknown> =>
+      !!item && typeof item === "object" && !Array.isArray(item)
+    );
   } catch {
     return [];
   }
@@ -2032,8 +2048,8 @@ async function collectCrowdSecSecurityEvents(config: AgentConfig) {
   ], config.commandTimeoutMs);
 
   return {
-    alerts: parseJsonArray(alertsResult.stdout).slice(0, 200),
-    decisions: parseJsonArray(decisionsResult.stdout).slice(0, 500),
+    alerts: parseJsonList(alertsResult.stdout).slice(0, 200),
+    decisions: parseJsonList(decisionsResult.stdout).slice(0, 500),
   };
 }
 
@@ -3024,8 +3040,8 @@ async function collectWindowsCrowdSecSecurityEvents(config: AgentConfig) {
   );
 
   return {
-    alerts: parseJsonArray(alertsResult.stdout).slice(0, 200),
-    decisions: parseJsonArray(decisionsResult.stdout).slice(0, 500),
+    alerts: parseJsonList(alertsResult.stdout).slice(0, 200),
+    decisions: parseJsonList(decisionsResult.stdout).slice(0, 500),
   };
 }
 
