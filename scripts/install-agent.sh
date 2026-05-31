@@ -8,7 +8,7 @@ AGENT_USER="root"
 AGENT_GROUP="root"
 AGENT_RUNTIME_KIT_DIR="${AGENT_RUNTIME_KIT_DIR:-/opt/mnscloud/runtime-kit}"
 AGENT_RUNTIME_KIT_REPO_URL="${AGENT_RUNTIME_KIT_REPO_URL:-https://github.com/manaoscloud/mnscloud-runtime-kit.git}"
-AGENT_RUNTIME_KIT_REF="${AGENT_RUNTIME_KIT_REF:-v0.1.5}"
+AGENT_RUNTIME_KIT_REF="${AGENT_RUNTIME_KIT_REF:-v0.1.6}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"

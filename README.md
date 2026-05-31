@@ -123,37 +123,105 @@ view as the primary troubleshooting surface instead of querying the database.
 
 ## Updating
 
-Use the explicit update command when this repository has a newer Agent version:
+Production Agent updates are driven by explicit Git tags/releases. The `main`
+branch is a development integration branch and is not a production update
+target. The MNSCloud API/application should read `releases/manifest.json`,
+select the operator-approved channel, compare that channel with the version
+reported by the Agent heartbeat, and send/update using the manifest `ref`.
+
+Use the explicit update command with a release ref when this repository has a
+newer homologated Agent version:
 
 ```bash
 cd /opt/mnscloud/mnscloud-agent
-sudo bash scripts/update-agent.sh
+sudo bash scripts/update-agent.sh --ref v1.0.2
 ```
 
 Windows update:
 
 ```powershell
-.\scripts\update-agent-windows.ps1
+.\scripts\update-agent-windows.ps1 -Ref "v1.0.2"
 ```
 
-The update command syncs the repository, reinstalls service files, preserves the
-existing Agent UUID/token, reuses the current API base URL and local install
-label from `/etc/mnscloud/agent/agent.conf`, validates the existing Agent
-identity against the MNSCloud API, then restarts `mnscloud-agent.service`. If
-the Agent was deleted or its token is no longer valid in MNSCloud, update stops
-before reactivating the local service. In that case, uninstall locally and
-generate a new install command from the application.
+The update command fetches tags, checks out the explicit ref, reinstalls service
+files, preserves the existing Agent UUID/token, reuses the current API base URL
+and local install label from `/etc/mnscloud/agent/agent.conf`, validates the
+existing Agent identity against the MNSCloud API, then restarts
+`mnscloud-agent.service`. If the Agent was deleted or its token is no longer
+valid in MNSCloud, update stops before reactivating the local service. In that
+case, uninstall locally and generate a new install command from the application.
+
+If `--ref` is omitted, the updater only fast-forwards the current checkout. That
+mode is useful for development hosts but should not be used by production
+automation.
 
 Installed runtimes include `/opt/mnscloud/agent/VERSION` and
 `/opt/mnscloud/agent/build.json`. Heartbeats report the installed version,
 build reference, build date, and update channel so the MNSCloud application can
 show whether each server is running the current Agent release.
 
+## Release Discovery Contract
+
+Canonical release metadata lives in [`releases/manifest.json`](./releases/manifest.json).
+
+The MNSCloud API/application must use this contract:
+
+- Treat `main` as development only.
+- Treat `channels.<channel>.ref` as the production update target.
+- Compare `channels.<channel>.version` with the Agent heartbeat `version`.
+- Use Agent heartbeat `updateChannel` to select the default channel.
+- Use `minimumVersion` to mark versions that are too old for automatic update.
+- Keep automatic update disabled unless policy explicitly enables it for the
+  environment, tenant, or security profile.
+
+The Agent heartbeat already reports:
+
+```json
+{
+  "version": "1.0.2",
+  "buildRef": "abc123def456",
+  "buildDate": "2026-05-31T19:15:37Z",
+  "updateChannel": "stable"
+}
+```
+
+Expected API-side response shape for update checks:
+
+```json
+{
+  "upToDate": false,
+  "currentVersion": "1.0.1",
+  "targetVersion": "1.0.2",
+  "targetRef": "v1.0.2",
+  "channel": "stable",
+  "autoUpdate": false,
+  "updateCommand": "sudo bash scripts/update-agent.sh --ref v1.0.2"
+}
+```
+
+## Maintainer Release Flow
+
+Only maintainers should publish production Agent releases:
+
+```bash
+cd /opt/mnscloud/mnscloud-agent
+scripts/release-agent.sh --version 1.0.3 --channel stable
+git push origin main
+git push origin v1.0.3
+gh release create v1.0.3 --title "mnscloud-agent v1.0.3" --generate-notes
+```
+
+AI coding agents must follow the same flow: update code, validate, update
+`VERSION` and `releases/manifest.json`, commit, tag, push `main`, and push the
+tag. Do not tell the application that a version is available until the tag has
+been pushed.
+
 Manual equivalent:
 
 ```bash
 cd /opt/mnscloud/mnscloud-agent
-gh repo sync
+git fetch --all --tags --prune
+git checkout v1.0.2
 sudo bash scripts/install-agent.sh
 sudo systemctl restart mnscloud-agent.service
 sudo systemctl status mnscloud-agent.service --no-pager

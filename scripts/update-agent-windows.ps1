@@ -1,6 +1,7 @@
 param(
   [string]$ApiBase = $env:MNSCLOUD_API_BASE,
-  [string]$Name = $env:AGENT_NAME
+  [string]$Name = $env:AGENT_NAME,
+  [string]$Ref = $env:MNSCLOUD_AGENT_REF
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +14,12 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 if (Test-Path (Join-Path $RepoDir ".git")) {
   Push-Location $RepoDir
   try {
-    git pull --ff-only
+    if ($Ref) {
+      git fetch --all --tags --prune
+      git -c advice.detachedHead=false checkout $Ref
+    } else {
+      git pull --ff-only
+    }
   } finally {
     Pop-Location
   }

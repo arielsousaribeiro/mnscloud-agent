@@ -14,6 +14,19 @@ This repository is a standalone public MNSCloud client, installer, agent, or edg
 - Run repository validation before committing.
 - Do not leave completed changes uncommitted or unpushed when working as a maintainer.
 
+## Release Workflow For Maintainers And AI Agents
+
+- Production Agent updates are Git tag based.
+- `main` is development/integration only.
+- `VERSION` must match the intended semantic version without `v`.
+- `releases/manifest.json` is the canonical update-discovery source for the
+  MNSCloud API/application.
+- Publish a release by validating, committing, tagging `vX.Y.Z`, pushing `main`,
+  and pushing the tag.
+- Use `scripts/update-agent.sh --ref vX.Y.Z` for production updates.
+- Never tell the application or operators that a version is available until the
+  matching tag exists on GitHub.
+
 ## Security Boundary
 
 Never commit secrets, tokens, customer data, provider credentials, database credentials, production

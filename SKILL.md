@@ -7,6 +7,8 @@ Use this contract when changing the `agent/` module.
 - Runtime: `main.ts`
 - Installer: `scripts/install-agent.sh`
 - Update command: `scripts/update-agent.sh`
+- Release manifest: `releases/manifest.json`
+- Release helper: `scripts/release-agent.sh`
 - Uninstall command: `scripts/uninstall-agent.sh`
 - Generated systemd unit: `mnscloud-agent.service`
 - Windows installer: `scripts/install-agent-windows.ps1`
@@ -41,6 +43,9 @@ Lifecycle script names must stay symmetric:
 - `install-agent`
 - `update-agent`
 - `uninstall-agent`
+
+Production lifecycle refs must be Git tags. `main` is a development integration
+branch and must not be advertised to the application as a production update.
 
 ## Language Policy
 
@@ -84,6 +89,20 @@ identity.
 - Do not commit secrets, customer data, production IPs, tenant-specific values,
   private business rules, static master tokens, or API bypasses.
 
+## Release And Update Contract
+
+- `VERSION` is the installed semantic version without the `v` prefix.
+- Git tags use `vX.Y.Z`.
+- `releases/manifest.json` is the canonical source for application update
+  discovery.
+- The application/API should compare heartbeat `version` and `updateChannel`
+  against the manifest channel and return the target `ref`.
+- `scripts/update-agent.sh --ref vX.Y.Z` is the production update command.
+- Omitted `--ref` is development-only and fast-forwards the current checkout.
+- Do not mark a new release as available until `main` and the matching Git tag
+  have been pushed.
+- Prefer GitHub Releases for operator visibility after the tag is pushed.
+
 ## Checklist
 
 - Update documentation when changing the Agent contract.
@@ -105,6 +124,8 @@ identity.
 - Windows Cyber Security must use CrowdSec for Windows plus the CrowdSec Windows
   Firewall remediation component.
 - Validate `scripts/install-agent.sh` with `bash -n`.
+- Validate `scripts/update-agent.sh` with `bash -n`.
+- Validate `scripts/release-agent.sh` with `bash -n`.
 - Validate `scripts/uninstall-agent.sh` with `bash -n`.
 - Validate PowerShell installers with PowerShell parser checks when PowerShell
   is available.
