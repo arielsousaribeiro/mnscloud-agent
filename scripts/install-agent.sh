@@ -8,7 +8,8 @@ AGENT_USER="root"
 AGENT_GROUP="root"
 AGENT_RUNTIME_KIT_DIR="${AGENT_RUNTIME_KIT_DIR:-/opt/mnscloud/runtime-kit}"
 AGENT_RUNTIME_KIT_REPO_URL="${AGENT_RUNTIME_KIT_REPO_URL:-https://github.com/manaoscloud/mnscloud-runtime-kit.git}"
-AGENT_RUNTIME_KIT_REF="${AGENT_RUNTIME_KIT_REF:-v0.1.6}"
+AGENT_RUNTIME_KIT_REF="${AGENT_RUNTIME_KIT_REF:-}"
+AGENT_RUNTIME_KIT_CHANNEL="${AGENT_RUNTIME_KIT_CHANNEL:-stable}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -172,7 +173,7 @@ ensure_runtime_kit_git() {
 
 load_runtime_kit() {
   if $DRY_RUN; then
-    log DRY-RUN "load mnscloud-runtime-kit ref ${AGENT_RUNTIME_KIT_REF} from ${AGENT_RUNTIME_KIT_REPO_URL}"
+    log DRY-RUN "load mnscloud-runtime-kit from ${AGENT_RUNTIME_KIT_REPO_URL}"
     return 0
   fi
 
@@ -186,6 +187,11 @@ load_runtime_kit() {
     git clone "$AGENT_RUNTIME_KIT_REPO_URL" "$AGENT_RUNTIME_KIT_DIR"
   fi
 
+  if [[ -z "$AGENT_RUNTIME_KIT_REF" ]]; then
+    AGENT_RUNTIME_KIT_REF="$(resolve_runtime_kit_ref "$AGENT_RUNTIME_KIT_DIR" "$AGENT_RUNTIME_KIT_CHANNEL")"
+    info "Resolved runtime kit ${AGENT_RUNTIME_KIT_CHANNEL} channel to ${AGENT_RUNTIME_KIT_REF}"
+  fi
+
   git -C "$AGENT_RUNTIME_KIT_DIR" -c advice.detachedHead=false checkout "$AGENT_RUNTIME_KIT_REF"
   git -C "$AGENT_RUNTIME_KIT_DIR" pull --ff-only origin "$AGENT_RUNTIME_KIT_REF" 2>/dev/null || true
   [[ -r "${AGENT_RUNTIME_KIT_DIR}/lib/packages.sh" ]] || fail "runtime kit packages library not found"
@@ -193,6 +199,28 @@ load_runtime_kit() {
   export MNSCLOUD_RUNTIME_KIT_LOG_PREFIX="mnscloud-agent/runtime-kit"
   # shellcheck disable=SC1091
   source "${AGENT_RUNTIME_KIT_DIR}/lib/packages.sh"
+}
+
+resolve_runtime_kit_ref() {
+  local kit_dir="$1"
+  local channel="$2"
+  local manifest ref
+
+  manifest="$(git -C "$kit_dir" show "origin/main:releases/manifest.json" 2>/dev/null)" ||
+    fail "cannot read runtime kit release manifest from origin/main"
+  ref="$(printf '%s\n' "$manifest" | awk -v channel="$channel" '
+    $0 ~ "\"" channel "\"" { in_channel = 1; next }
+    in_channel && /"ref"[[:space:]]*:/ {
+      gsub(/.*"ref"[[:space:]]*:[[:space:]]*"/, "")
+      gsub(/".*/, "")
+      print
+      exit
+    }
+    in_channel && /^[[:space:]]*}/ { in_channel = 0 }
+  ')"
+  [[ "$ref" =~ ^v[0-9]+[.][0-9]+[.][0-9]+([-+][0-9A-Za-z.-]+)?$ ]] ||
+    fail "invalid runtime kit ref for channel ${channel}: ${ref:-empty}"
+  printf '%s\n' "$ref"
 }
 
 ensure_deno() {

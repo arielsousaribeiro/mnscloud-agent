@@ -134,13 +134,13 @@ newer homologated Agent version:
 
 ```bash
 cd /opt/mnscloud/mnscloud-agent
-sudo bash scripts/update-agent.sh --ref v1.0.2
+sudo bash scripts/update-agent.sh --ref v1.0.3
 ```
 
 Windows update:
 
 ```powershell
-.\scripts\update-agent-windows.ps1 -Ref "v1.0.2"
+.\scripts\update-agent-windows.ps1 -Ref "v1.0.3"
 ```
 
 The update command fetches tags, checks out the explicit ref, reinstalls service
@@ -178,9 +178,9 @@ The Agent heartbeat already reports:
 
 ```json
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "buildRef": "abc123def456",
-  "buildDate": "2026-05-31T19:15:37Z",
+  "buildDate": "2026-05-31T19:36:01Z",
   "updateChannel": "stable"
 }
 ```
@@ -191,11 +191,11 @@ Expected API-side response shape for update checks:
 {
   "upToDate": false,
   "currentVersion": "1.0.1",
-  "targetVersion": "1.0.2",
-  "targetRef": "v1.0.2",
+  "targetVersion": "1.0.3",
+  "targetRef": "v1.0.3",
   "channel": "stable",
   "autoUpdate": false,
-  "updateCommand": "sudo bash scripts/update-agent.sh --ref v1.0.2"
+  "updateCommand": "sudo bash scripts/update-agent.sh --ref v1.0.3"
 }
 ```
 
@@ -205,10 +205,10 @@ Only maintainers should publish production Agent releases:
 
 ```bash
 cd /opt/mnscloud/mnscloud-agent
-scripts/release-agent.sh --version 1.0.3 --channel stable
+scripts/release-agent.sh --version 1.0.4 --channel stable
 git push origin main
-git push origin v1.0.3
-gh release create v1.0.3 --title "mnscloud-agent v1.0.3" --generate-notes
+git push origin v1.0.4
+gh release create v1.0.4 --title "mnscloud-agent v1.0.4" --generate-notes
 ```
 
 AI coding agents must follow the same flow: update code, validate, update
@@ -221,7 +221,7 @@ Manual equivalent:
 ```bash
 cd /opt/mnscloud/mnscloud-agent
 git fetch --all --tags --prune
-git checkout v1.0.2
+git checkout v1.0.3
 sudo bash scripts/install-agent.sh
 sudo systemctl restart mnscloud-agent.service
 sudo systemctl status mnscloud-agent.service --no-pager
