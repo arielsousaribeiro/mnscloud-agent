@@ -6,6 +6,9 @@ DRY_RUN=false
 DEFAULT_API_BASE="${MNSCLOUD_API_BASE:-https://api.publichost.cloud}"
 AGENT_USER="root"
 AGENT_GROUP="root"
+AGENT_RUNTIME_KIT_DIR="${AGENT_RUNTIME_KIT_DIR:-/opt/mnscloud/runtime-kit}"
+AGENT_RUNTIME_KIT_REPO_URL="${AGENT_RUNTIME_KIT_REPO_URL:-https://github.com/manaoscloud/mnscloud-runtime-kit.git}"
+AGENT_RUNTIME_KIT_REF="${AGENT_RUNTIME_KIT_REF:-v0.1.5}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -152,15 +155,56 @@ install_packages() {
   esac
 }
 
-ensure_deno() {
-  if command -v deno >/dev/null 2>&1; then
-    ok "Deno is available: $(deno --version | head -n1)"
+ensure_runtime_kit_git() {
+  if command -v git >/dev/null 2>&1; then
     return 0
   fi
+
   install_packages "$(detect_os)"
-  run "install -m 0755 -d /usr/local/deno /usr/local/bin"
-  run "CI=1 DENO_INSTALL=/usr/local/deno sh -c 'curl -fsSL https://deno.land/install.sh | sh -s -- --no-modify-path'"
-  run "ln -sf /usr/local/deno/bin/deno /usr/local/bin/deno"
+  if command -v apt-get >/dev/null 2>&1; then
+    run "apt-get install -y --no-install-recommends git"
+  elif command -v dnf >/dev/null 2>&1; then
+    run "dnf -y install git"
+  fi
+
+  command -v git >/dev/null 2>&1 || fail "git is required to install mnscloud-runtime-kit"
+}
+
+load_runtime_kit() {
+  if $DRY_RUN; then
+    log DRY-RUN "load mnscloud-runtime-kit ref ${AGENT_RUNTIME_KIT_REF} from ${AGENT_RUNTIME_KIT_REPO_URL}"
+    return 0
+  fi
+
+  ensure_runtime_kit_git
+  if [[ -d "${AGENT_RUNTIME_KIT_DIR}/.git" ]]; then
+    info "Updating runtime kit in ${AGENT_RUNTIME_KIT_DIR}"
+    git -C "$AGENT_RUNTIME_KIT_DIR" fetch --all --tags --prune
+  else
+    info "Installing runtime kit in ${AGENT_RUNTIME_KIT_DIR}"
+    install -d -m 0755 "$(dirname "$AGENT_RUNTIME_KIT_DIR")"
+    git clone "$AGENT_RUNTIME_KIT_REPO_URL" "$AGENT_RUNTIME_KIT_DIR"
+  fi
+
+  git -C "$AGENT_RUNTIME_KIT_DIR" -c advice.detachedHead=false checkout "$AGENT_RUNTIME_KIT_REF"
+  git -C "$AGENT_RUNTIME_KIT_DIR" pull --ff-only origin "$AGENT_RUNTIME_KIT_REF" 2>/dev/null || true
+  [[ -r "${AGENT_RUNTIME_KIT_DIR}/lib/packages.sh" ]] || fail "runtime kit packages library not found"
+
+  export MNSCLOUD_RUNTIME_KIT_LOG_PREFIX="mnscloud-agent/runtime-kit"
+  # shellcheck disable=SC1091
+  source "${AGENT_RUNTIME_KIT_DIR}/lib/packages.sh"
+}
+
+ensure_deno() {
+  if $DRY_RUN; then
+    log DRY-RUN "install Deno ${MNSCLOUD_DENO_VERSION:-2.8.1} via mnscloud-runtime-kit"
+    return 0
+  fi
+
+  load_runtime_kit
+  export MNSCLOUD_DENO_VERSION="${MNSCLOUD_DENO_VERSION:-2.8.1}"
+  mrtk_ensure_deno
+  ok "Deno is available: $(deno --version | head -n1)"
 }
 
 normalize_url() {
