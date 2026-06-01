@@ -323,6 +323,7 @@ write_agent_config() {
 name = ${install_label}
 hostname = ${hostname}
 api_base = ${api_base}
+update_repo_dir = ${AGENT_SOURCE_DIR}
 poll_interval_ms = 15000
 heartbeat_interval_ms = 60000
 cyber_security_sync_interval_ms = 60000

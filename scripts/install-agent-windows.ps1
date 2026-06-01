@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ServiceName = "MNSCloudAgent"
+$RepoDir = Split-Path -Parent $PSScriptRoot
 $InstallDir = "C:\Program Files\MNSCloud\Agent"
 $ConfigDir = Join-Path $env:ProgramData "MNSCloud\Agent"
 $ConfigFile = Join-Path $ConfigDir "agent.conf"
@@ -85,6 +86,7 @@ function Write-AgentConfig([string]$DenoPath) {
 name = $AgentInstallLabel
 hostname = $env:COMPUTERNAME
 api_base = $DefaultApiBase
+update_repo_dir = $RepoDir
 poll_interval_ms = 15000
 heartbeat_interval_ms = 60000
 cyber_security_sync_interval_ms = 60000

@@ -7,6 +7,7 @@ type AgentConfig = {
   buildRef: string;
   buildDate: string;
   updateChannel: string;
+  updateRepoDir: string;
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
   cyberSecuritySyncIntervalMs: number;
@@ -52,6 +53,7 @@ type LeaseJob = {
     | "nginx_edge"
     | "certbot"
     | "webrtc_edge"
+    | "agent_update"
     | string
     | null;
   action?: "sync" | "delete" | string | null;
@@ -65,6 +67,10 @@ type LeaseJob = {
   uploadUrl?: string | null;
   uploadMethod?: string | null;
   uploadHeaders?: Record<string, string> | null;
+  targetVersion?: string | null;
+  targetRef?: string | null;
+  targetBuildRef?: string | null;
+  channel?: string | null;
 };
 
 type PabxRegistrationReport = {
@@ -195,6 +201,14 @@ async function loadConfig(): Promise<AgentConfig> {
     buildRef: build.buildRef,
     buildDate: build.buildDate,
     updateChannel: build.updateChannel,
+    updateRepoDir: getConfigValue(
+      parsed,
+      "agent",
+      "update_repo_dir",
+      IS_WINDOWS
+        ? "C:\\mnscloud\\mnscloud-agent"
+        : "/opt/mnscloud/mnscloud-agent",
+    ),
     pollIntervalMs: getNumber(parsed, "agent", "poll_interval_ms", 15_000),
     heartbeatIntervalMs: getNumber(
       parsed,
@@ -462,7 +476,7 @@ async function reportJobProgress(
       agentToken,
       agentUUID,
       {
-        jobType: "cyber_security",
+        jobType: String(extra.jobType ?? "cyber_security"),
         step,
         percent,
         message,
@@ -1770,6 +1784,124 @@ async function executeWebRtcEdgeJob(
       "WEBRTC_EDGE_COMMAND_FAILED",
       error instanceof Error ? error.message : String(error),
       "webrtc_edge",
+    );
+  }
+}
+
+function assertSafeAgentUpdateRef(ref: string) {
+  if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(ref)) {
+    throw new Error(`Invalid Agent update ref: ${ref || "empty"}`);
+  }
+}
+
+async function scheduleLinuxAgentUpdate(
+  config: AgentConfig,
+  jobUUID: string,
+  targetRef: string,
+) {
+  const unit = `mnscloud-agent-update-${
+    jobUUID.replace(/[^a-zA-Z0-9_-]/g, "-")
+  }`;
+  const command = [
+    "sleep 2",
+    `cd ${shellQuote(config.updateRepoDir)}`,
+    `bash scripts/update-agent.sh --ref ${shellQuote(targetRef)}`,
+  ].join(" && ");
+  return await runLocalCommand("systemd-run", [
+    "--unit",
+    unit,
+    "--collect",
+    "--property",
+    "After=network-online.target",
+    "/bin/bash",
+    "-lc",
+    command,
+  ], Math.max(config.commandTimeoutMs, 15_000));
+}
+
+async function scheduleWindowsAgentUpdate(
+  config: AgentConfig,
+  targetRef: string,
+) {
+  const command = [
+    "Start-Sleep -Seconds 2",
+    `Set-Location ${powerShellQuote(config.updateRepoDir)}`,
+    `.\\scripts\\update-agent-windows.ps1 -Ref ${powerShellQuote(targetRef)}`,
+  ].join("; ");
+  const script = [
+    "Start-Process",
+    "-FilePath powershell.exe",
+    "-WindowStyle Hidden",
+    "-ArgumentList",
+    powerShellQuote(
+      `-NoProfile -ExecutionPolicy Bypass -Command ${powerShellQuote(command)}`,
+    ),
+  ].join(" ");
+  return await runPowerShell(script, Math.max(config.commandTimeoutMs, 15_000));
+}
+
+async function executeAgentUpdateJob(
+  job: LeaseJob,
+  config: AgentConfig,
+  agentUUID: string,
+  agentToken: string,
+) {
+  const targetRef = String(job.targetRef ?? job.payload?.targetRef ?? "");
+  const targetVersion = String(
+    job.targetVersion ?? job.payload?.targetVersion ?? "",
+  );
+  try {
+    assertSafeAgentUpdateRef(targetRef);
+    if (targetVersion && targetRef !== `v${targetVersion}`) {
+      throw new Error("Agent update target version/ref mismatch.");
+    }
+    await reportJobProgress(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      "scheduling",
+      40,
+      `Scheduling Agent update to ${targetRef}.`,
+      { jobType: "agent_update", targetRef, targetVersion },
+    );
+
+    const result = IS_WINDOWS
+      ? await scheduleWindowsAgentUpdate(config, targetRef)
+      : await scheduleLinuxAgentUpdate(config, job.jobUUID, targetRef);
+    if (result.code !== 0) {
+      throw new Error(
+        result.stderr || result.stdout || `Updater exited with ${result.code}.`,
+      );
+    }
+
+    await jsonRequest(
+      config,
+      `/agent/jobs/${job.jobUUID}/complete`,
+      agentToken,
+      agentUUID,
+      {
+        jobType: "agent_update",
+        result: {
+          targetRef,
+          targetVersion,
+          targetBuildRef: job.targetBuildRef ?? null,
+          scheduled: true,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        },
+      },
+    );
+    log("info", "Agent update scheduled.", { jobUUID: job.jobUUID, targetRef });
+  } catch (error) {
+    await failJob(
+      config,
+      job.jobUUID,
+      agentUUID,
+      agentToken,
+      "AGENT_UPDATE_SCHEDULE_FAILED",
+      error instanceof Error ? error.message : String(error),
+      "agent_update",
     );
   }
 }
@@ -3574,6 +3706,8 @@ async function pollJobs(
       await executeCertbotJob(job, config, agentUUID, agentToken);
     } else if (job.jobType === "webrtc_edge") {
       await executeWebRtcEdgeJob(job, config, agentUUID, agentToken);
+    } else if (job.jobType === "agent_update") {
+      await executeAgentUpdateJob(job, config, agentUUID, agentToken);
     } else {
       await uploadJob(job, config, agentUUID, agentToken);
     }
