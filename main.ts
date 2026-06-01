@@ -1365,6 +1365,7 @@ function renderNginxEdgeDomainConfig(
 
   const httpBlock = `server {
   listen 80;
+  listen [::]:80;
   server_name ${domain};
 
   if ($request_uri ~ "^//") {
@@ -1409,6 +1410,7 @@ function renderNginxEdgeDomainConfig(
   const sslBase = `${config.nginxEdgeSslLiveDir.replace(/\/+$/, "")}/${domain}`;
   const httpsBlock = `server {
   listen 443 ssl;
+  listen [::]:443 ssl;
   http2 on;
   server_name ${domain};
 
