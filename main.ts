@@ -1840,7 +1840,7 @@ async function scheduleWindowsAgentUpdate(
   return await runPowerShell(script, Math.max(config.commandTimeoutMs, 15_000));
 }
 
-async function executeAgentUpdateJob(
+async function executeMonitoringAgentUpdateJob(
   job: LeaseJob,
   config: AgentConfig,
   agentUUID: string,
@@ -3707,7 +3707,7 @@ async function pollJobs(
     } else if (job.jobType === "webrtc_edge") {
       await executeWebRtcEdgeJob(job, config, agentUUID, agentToken);
     } else if (job.jobType === "agent_update") {
-      await executeAgentUpdateJob(job, config, agentUUID, agentToken);
+      await executeMonitoringAgentUpdateJob(job, config, agentUUID, agentToken);
     } else {
       await uploadJob(job, config, agentUUID, agentToken);
     }
