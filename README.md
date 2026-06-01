@@ -154,6 +154,13 @@ case, uninstall locally and generate a new install command from the application.
 The update command fails closed when the release ref is omitted. Production and
 automation must never update from an implicit branch checkout.
 
+Remote updates from the MNSCloud App use the same explicit release-ref command.
+The API queues an `agent_update` job with `targetRef`, and the Agent schedules
+the local updater outside the running service process before reporting the job
+as scheduled. The next heartbeat confirms the installed version. Remote updates
+are supported only by Agent `1.0.6` or newer; older Agents must be manually
+updated once with `scripts/update-agent.sh --ref v1.0.6`.
+
 Installed runtimes include `/opt/mnscloud/agent/VERSION` and
 `/opt/mnscloud/agent/build.json`. Heartbeats report the installed version,
 build reference, build date, and update channel so the MNSCloud application can

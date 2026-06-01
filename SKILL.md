@@ -99,6 +99,10 @@ identity.
   against the manifest channel and return the target `ref`.
 - `scripts/update-agent.sh --ref vX.Y.Z` is the production update command.
 - Omitted `--ref` must fail closed; implicit branch updates are not supported.
+- Remote App/API updates must queue `agent_update` jobs with an explicit
+  `targetRef` and are supported only by Agent `1.0.6` or newer.
+- Agents older than `1.0.6` require one manual tagged update before remote
+  updates can be offered in the App.
 - Do not mark a new release as available until `main` and the matching Git tag
   have been pushed.
 - Prefer GitHub Releases for operator visibility after the tag is pushed.

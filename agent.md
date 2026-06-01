@@ -87,6 +87,19 @@ starting the local service. This protects deleted or deactivated Agent
 identities from being silently revived by a server that still has old local
 state.
 
+## Remote Updates
+
+Remote updates are release-tag based. The control plane must never ask the
+Agent to update from an implicit branch. The API queues an `agent_update` job
+with a `targetRef` such as `v1.0.6`; the Agent validates the ref format and
+schedules `scripts/update-agent.sh --ref <targetRef>` outside the currently
+running process.
+
+Remote update support starts at Agent `1.0.6`. Hosts running an older Agent must
+be manually updated once before the App can queue remote updates for them. The
+remote job reports that the update was scheduled, while final success is
+confirmed by the next heartbeat reporting the target version and build ref.
+
 ## Local Uninstall
 
 Agent lifecycle scripts are intentionally symmetric:
